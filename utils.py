@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import norm
 
 import configs
-from model.refinenet import RefineNet, RefineNetV1
+from model.refinenet import RefineNet
 # from model.resnet import ResNet
 
 dict_datasets_image_size = {
@@ -182,9 +182,9 @@ def evaluate_print_model_summary(model, verbose=True):
     print(input_shape)
     sigma_levels= get_sigma_levels() #tf.linspace(0.0,1.0,3) # 
     idx_sigmas = tf.ones(batch, dtype=tf.int32)
-    sigmas = tf.gather(sigma_levels, idx_sigmas)
-    sigmas = tf.cast(tf.reshape(sigmas, shape=(batch, 1, 1, 1)), dtype=tf.float32)
-    x = [tf.ones(shape=input_shape), sigmas]
+#     sigmas = tf.gather(sigma_levels, idx_sigmas)
+#     sigmas = tf.cast(tf.reshape(sigmas, shape=(batch, 1, 1, 1)), dtype=tf.float32)
+    x = [tf.ones(shape=input_shape), idx_sigmas]
     model(x)
     if verbose:
         print(model.summary())
