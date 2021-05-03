@@ -1,9 +1,8 @@
 # Ignoring folders
-
+logs/*
 samples/*
 saved_models/*
 data/*
-ood_detection_helper.py
 *.ipynb
 
 # Byte-compiled / optimized / DLL files

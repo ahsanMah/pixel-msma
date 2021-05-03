@@ -1,7 +1,7 @@
 import argparse
 import os
-import re
-
+import re # Adding more code
+import yaml
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from scipy.stats import norm
@@ -61,6 +61,8 @@ dict_splits = {
     "multiscale_cifar10": (3,3)
 }
 
+with open("./datasets/data_configs.yaml") as f:
+    configs.dataconfig = yaml.full_load(f)
 
 def find_k_closest(image, k, data_as_array):
     l2_distances = tf.reduce_sum(tf.square(data_as_array - image), axis=[1, 2, 3])
@@ -70,7 +72,7 @@ def find_k_closest(image, k, data_as_array):
 
 
 def get_dataset_image_size(dataset_name):
-    return dict_datasets_image_size[dataset_name]
+    return tuple(int(x) for x in configs.dataconfig[dataset_name]['shape'].split(','))
 
 
 def check_args_validity(args):
@@ -132,6 +134,8 @@ def _build_parser():
                         help="number of iterations to sample for each sigma (default: 100)")
     parser.add_argument('--eps', default=2*1e-5, type=int,
                         help="epsilon for generating samples (default: 2*1e-5)")
+    parser.add_argument('--class_label', default='all', type=str,
+                        help="which class label to use for training, applies to mvtec")
     return parser
 
 def get_command_line_args():
@@ -147,11 +151,7 @@ def get_command_line_args():
     s += "=" * 20 + "\n"
 
     print(s)
-
-    save_dir, complete_model_name = get_savemodel_dir()
-    with open(save_dir +"/params.txt", "wb") as f:
-        f.write(s)
-
+    
     return parser
 
 
@@ -166,19 +166,12 @@ def get_savemodel_dir():
     model_name = configs.config_values.model
     
     # Folder name: model_name+filters+dataset+L
-    if not configs.config_values.model == 'baseline':
-        complete_model_name = '{}{}_{}_L{}_SH{:.0e}_SL{:.0e}/train_{}'.format(model_name, configs.config_values.filters,
-                                                   configs.config_values.dataset, configs.config_values.num_L,
-                                                   configs.config_values.sigma_high,
-                                                   configs.config_values.sigma_low,
-                                                   "_".join(configs.config_values.split)
-                                                   )
-    else:
-        complete_model_name = '{}{}_{}_SL{:.0e}'.format(model_name, configs.config_values.filters, configs.config_values.dataset,configs.config_values.sigma_low)
+    complete_model_name = '{}{}_{}-{}_L{}_SH{:.0e}_SL{:.0e}/'.format(
+        model_name, configs.config_values.filters, configs.config_values.dataset,
+        configs.config_values.class_label, configs.config_values.num_L,
+        configs.config_values.sigma_high, configs.config_values.sigma_low)
     folder_name = models_dir + complete_model_name + '/'
-    
-    if configs.config_values.ocnn:
-        folder_name += "ocnn/"
+    os.makedirs(folder_name, exist_ok=True) 
     
     return folder_name, complete_model_name
 

@@ -1,0 +1,5 @@
+mvtec:
+  datadir: "/DATA/Users/amahmood/GDrive/MVTec_AD/"
+  shape: 64, 64, 3
+  batch_size: 32
+

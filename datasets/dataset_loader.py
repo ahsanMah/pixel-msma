@@ -1,11 +1,14 @@
 import os
 import pickle
 import re, glob
+import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
-
+import tensorflow_addons as tfa
 import configs
 import utils
+import yaml
+import pathlib
 
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 CIFAR_LABELS = ['background', 'airplane', 'automobile', 'bird', 'cat', 'deer',
@@ -14,8 +17,25 @@ CIFAR_LABELS = ['background', 'airplane', 'automobile', 'bird', 'cat', 'deer',
 BRAIN_LABELS = ["background", "CSF", "gray matter", "white matter",
         "deep gray matter", "brain stem", "cerebellum"]
 
+# with open("./datasets/data_configs.yaml") as f:
+#     dataconfig = yaml.full_load(f)
+
 def load_data(dataset_name):
     # load data from tfds
+    
+    if dataset_name == "mvtec":
+        base_path = configs.dataconfig[dataset_name]["datadir"]
+        dataset_dir =f"/{base_path}/{configs.config_values.class_label}/"
+        
+        builder = tfds.ImageFolder(dataset_dir)
+        val_size = int(0.1*builder.info.splits["train"].num_examples)
+        configs.dataconfig[dataset_name]["n_samples"] = builder.info.splits["train"].num_examples
+        
+        ds = builder.as_dataset(split='train', shuffle_files=False)
+        train_ds = ds.skip(val_size)
+        val_ds = ds.take(val_size)
+        
+        return train_ds, val_ds
     
     # Optionally split training data 
     if configs.config_values.split[0] != "100":
@@ -187,7 +207,30 @@ def get_brain_segs(x):
     x = tf.concat((img,seg), axis=-1)
     return x
 
+# @tf.function
+def mvtec_preproc(x_batch):
+    x = x_batch["image"]
+    print(x.shape)
+    x = tf.image.resize(x, (96, 96))
+    x.set_shape((96, 96, 3))
+    print(x.shape)
+    x = x / 255
+    return  x
+
+@tf.function
+def mvtec_aug(x):
+    x = tfa.image.rotate(x, tf.random.uniform((1,),0,np.pi))
+    x = tfa.image.translate(x, tf.random.uniform((1,2),-0.1*96, 0.1*96))
+    x = tf.image.resize_with_crop_or_pad(x, 64, 64)
+    x = tf.image.random_hue(x, max_delta=0.2)
+    x = tf.image.random_contrast(x, 0.9, 1.1)
+    x = tf.image.random_brightness(x, max_delta=0.1)
+    x = tf.image.random_flip_left_right(x)
+    x = tf.image.random_flip_up_down(x)
+    return  x
+
 preproc_map = {
+    "mvtec": mvtec_preproc,
     "brain": get_brain_only,
     "masked_brain": get_brain_masks,
     "seg_brain": get_brain_segs,
@@ -197,13 +240,17 @@ preproc_map = {
     "masked_pet": preproc_pet_masks,
 }
 
+aug_map = {
+    "mvtec": mvtec_aug
+}
+
 def preprocess(dataset_name, data, train=True):
 
     if dataset_name in preproc_map:
         _fn = preproc_map[dataset_name]
         data = data.map(_fn, num_parallel_calls=AUTOTUNE)
 
-    elif dataset_name not in ["masked_pet", "masked_cifar10"]:
+    elif dataset_name not in ["masked_pet", "masked_cifar10", "mvtec"]:
         data = data.map(lambda x: x / 255, num_parallel_calls=AUTOTUNE)  # rescale [0,255] -> [0,1]
     
     if dataset_name == "pet":
@@ -211,7 +258,11 @@ def preprocess(dataset_name, data, train=True):
 
     # Caching offline data
     data = data.cache()
-
+    
+    if train and dataset_name in aug_map:
+        data = data.map(aug_map[dataset_name],
+                        num_parallel_calls=AUTOTUNE)
+    
     # Online augmentation 
     if dataset_name in ["blown_fashion", "blown_masked_fashion"]:
         data = data.map(pad)

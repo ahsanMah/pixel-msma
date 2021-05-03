@@ -2,6 +2,7 @@ import csv
 from datetime import datetime
 
 import tensorflow as tf
+from tensorflow.keras import mixed_precision
 from tqdm import tqdm
 
 import configs
@@ -12,8 +13,12 @@ from losses.losses import dsm_loss, ocnn_loss, update_radius, normalized_dsm_los
 SIGMA_LEVELS = None
 LOGGER = tf.get_logger()
 
-def main():
 
+def main():
+    
+#     policy = mixed_precision.Policy('mixed_float16')
+#     mixed_precision.set_global_policy(policy)
+    
     device = utils.get_tensorflow_device()
     tf.random.set_seed(2019)
     LOG_FREQ = 100
@@ -43,6 +48,7 @@ def main():
         ema.in_use = False
         LOGGER.info("Swapped back to training state.")
         return
+    
     @tf.function
     def test_one_step(model, data_batch):
         idx_sigmas = (NUM_L-1) * tf.ones([data_batch.shape[0]],
@@ -131,10 +137,10 @@ def main():
     progress_bar = tqdm(train_data, total=total_steps, initial=step + 1)
     progress_bar.set_description('current loss ?')
 
-    steps_per_epoch = utils.dict_train_size[configs.config_values.dataset] // configs.config_values.batch_size
+    steps_per_epoch = configs.dataconfig[configs.config_values.dataset]["n_samples"] // configs.config_values.batch_size
     ocnn_freq = 25 * steps_per_epoch # Every 25 epochs 
-    # ocnn_steps_per_epoch = utils.dict_train_size[configs.config_values.dataset] // ocnn_batch_size
-
+    
+    
     radius = 1.0
     loss_history = []
     epoch =  step // steps_per_epoch
