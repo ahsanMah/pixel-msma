@@ -62,7 +62,8 @@ def full_norm(x):
     return x
 
 def load_model(inlier_name="cifar10", checkpoint=-1, save_path="saved_models/",
-                filters=128, batch_size=1000, split="100,0", sigma_high=1, num_L=10):
+                filters=128, batch_size=1000, split="100,0", sigma_high=1,
+                num_L=10, class_label="all"):
     args = get_command_line_args([
         "--checkpoint_dir=" + save_path,
         "--filters=" + str(filters),
@@ -72,7 +73,8 @@ def load_model(inlier_name="cifar10", checkpoint=-1, save_path="saved_models/",
         "--resume_from=" + str(checkpoint),
         "--batch_size=" + str(batch_size),
         "--split=" + split,
-        "--num_L=" + str(num_L)
+        "--num_L=" + str(num_L),
+        "--class_label=" + str(class_label)
         ])
     configs.config_values = args
 
@@ -81,7 +83,7 @@ def load_model(inlier_name="cifar10", checkpoint=-1, save_path="saved_models/",
     model, optimizer, step, _, _ = utils.try_load_model(save_dir,
                                                 step_ckpt=configs.config_values.resume_from,
                                                 verbose=True)
-    return model
+    return model, args
 
 def result_dict(train_score, test_score, ood_scores, metrics):
     return {
@@ -208,28 +210,49 @@ def compute_scores(model, x_test):
     return tf.stack(score_dict, axis=0)
 
 def compute_weighted_scores(model, x_test):
-    
     # Sigma Idx -> Score
     score_dict = []
-    
-    sigmas = utils.get_sigma_levels().numpy()
+    sigmas = utils.get_sigma_levels()
     final_logits = 0 #tf.zeros(logits_shape)
     progress_bar = tqdm(sigmas)
     for idx, sigma in enumerate(progress_bar):
         
         progress_bar.set_description("Sigma: {:.4f}".format(sigma))
-        _logits =[]
-
+        _logits = []
         for x_batch in x_test:
-            sigma_val = tf.ones((x_batch.shape[0], 1,1,1), dtype=tf.float32) * sigma
-            score = model([x_batch, sigma_val])
-            score = reduce_norm(score * sigma)
+            idx_sigmas = tf.ones(x_batch.shape[0], dtype=tf.float32) * idx
+            score = model([x_batch, idx_sigmas]) * sigma
+            score = reduce_norm(score)
             _logits.append(score)
+        score_dict.append(tf.identity(tf.concat(_logits, axis=0)))
+    
+    # N x L Matrix of score norms
+    scores =  tf.squeeze(tf.stack(score_dict, axis=1))
+    return scores
 
-        _logits = tf.concat(_logits, axis=0)
-        score_dict.append(tf.identity(_logits))
+# def compute_weighted_scores(model, x_test):
+    
+#     # Sigma Idx -> Score
+#     score_dict = []
+    
+#     sigmas = utils.get_sigma_levels().numpy()
+#     final_logits = 0 #tf.zeros(logits_shape)
+#     progress_bar = tqdm(sigmas)
+#     for idx, sigma in enumerate(progress_bar):
+        
+#         progress_bar.set_description("Sigma: {:.4f}".format(sigma))
+#         _logits =[]
 
-    return tf.stack(score_dict, axis=0)
+#         for x_batch in x_test:
+#             sigma_val = tf.ones((x_batch.shape[0], 1,1,1), dtype=tf.float32) * sigma
+#             score = model([x_batch, sigma_val])
+#             score = reduce_norm(score * sigma)
+#             _logits.append(score)
+
+#         _logits = tf.concat(_logits, axis=0)
+#         score_dict.append(tf.identity(_logits))
+
+#     return tf.stack(score_dict, axis=0)
 
 def plot_curves(inlier_score, outlier_score, label, axs=()):
 

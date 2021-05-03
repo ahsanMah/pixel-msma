@@ -56,7 +56,7 @@ def main():
         sigmas = tf.gather(SIGMA_LEVELS, idx_sigmas)
         sigmas = tf.reshape(sigmas, shape=(data_batch.shape[0], 1, 1, 1))
         data_batch_perturbed = data_batch + tf.random.normal(shape=data_batch.shape) * sigmas
-        scores = model([data_batch_perturbed, sigmas])
+        scores = model([data_batch_perturbed, idx_sigmas])
         current_loss = dsm_loss(scores, data_batch_perturbed, data_batch, sigmas)
         return current_loss
 
@@ -70,7 +70,7 @@ def main():
         data_batch_perturbed = data_batch + tf.random.normal(shape=data_batch.shape) * sigmas
         
         with tf.GradientTape() as t:
-            scores = model([data_batch_perturbed, sigmas])
+            scores = model([data_batch_perturbed, idx_sigmas])
             current_loss = dsm_loss(scores, data_batch_perturbed, data_batch, sigmas)
         
         gradients = t.gradient(current_loss, model.trainable_variables)
@@ -138,9 +138,7 @@ def main():
     progress_bar.set_description('current loss ?')
 
     steps_per_epoch = configs.dataconfig[configs.config_values.dataset]["n_samples"] // configs.config_values.batch_size
-    ocnn_freq = 25 * steps_per_epoch # Every 25 epochs 
-    
-    
+       
     radius = 1.0
     loss_history = []
     epoch =  step // steps_per_epoch
@@ -195,19 +193,6 @@ def main():
             
             # loss_history.append([step, current_loss.numpy()])
             avg_loss += current_loss
-
-            if configs.config_values.ocnn and step % ocnn_freq == 0:
-                for i in range(ocnn_steps_per_epoch):
-                    data_batch = next(iter(ocnn_data))
-                    best_idx_sigmas = tf.ones([data_batch.shape[0]],
-                    dtype=tf.dtypes.int32) * configs.config_values.num_L-1
-                    sigmas = tf.gather(sigma_levels, best_idx_sigmas)
-                    sigmas = tf.reshape(sigmas, shape=(data_batch.shape[0], 1, 1, 1))
-                    data_batch_perturbed = data_batch + tf.random.normal(shape=data_batch.shape) * sigmas
-                    
-                    loss, radius = train_ocnn_step(ocnn_model, ocnn_optimizer, data_batch_perturbed, best_idx_sigmas, radius)
-                    progress_bar.set_description(
-                        'OC-NN: radius {:.3f} | loss {:.3f}'.format(radius, loss))
 
             if step % configs.config_values.checkpoint_freq == 0:
                 swap_weights()
