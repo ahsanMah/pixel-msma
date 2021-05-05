@@ -1,5 +1,6 @@
 mvtec:
   datadir: "/DATA/Users/amahmood/GDrive/MVTec_AD/"
+  datadir_gdrive: "/content/drive/MyDrive/ML_Datasets/MvTec_AD/"
   shape: 64, 64, 3
   batch_size: 32
 
