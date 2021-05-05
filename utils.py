@@ -252,7 +252,8 @@ def try_load_model(save_dir, step_ckpt=-1, return_new_model=True, verbose=True, 
     if configs.config_values.resume:
         if step_ckpt == -1:
             print("Trying to load latest model from " + save_dir)
-            checkpoint = tf.train.latest_checkpoint(str(save_dir))
+            checkpoint = tf.train.latest_checkpoint(
+                str(os.path.abspath(save_dir)))
         else:
             print("Trying to load checkpoint with step", step_ckpt, " model from " + save_dir)
             onlyfiles = [f for f in os.listdir(save_dir) if os.path.isfile(os.path.join(save_dir, f))]
