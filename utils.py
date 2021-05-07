@@ -62,7 +62,7 @@ dict_splits = {
 }
 
 with open("./datasets/data_configs.yaml") as f:
-    configs.dataconfig = yaml.load(f)
+    configs.dataconfig = yaml.safe_load(f)
 
 def find_k_closest(image, k, data_as_array):
     l2_distances = tf.reduce_sum(tf.square(data_as_array - image), axis=[1, 2, 3])

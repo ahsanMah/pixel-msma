@@ -207,21 +207,24 @@ def get_brain_segs(x):
     x = tf.concat((img,seg), axis=-1)
     return x
 
-# @tf.function
+@tf.function
 def mvtec_preproc(x_batch):
     x = x_batch["image"]
-    print(x.shape)
-    x = tf.image.resize(x, (96, 96))
-    x.set_shape((96, 96, 3))
+    img_sz = int(configs.dataconfig["mvtec"]["downsample"][0])
+    x = tf.image.resize(x, (img_sz, img_sz))
+# #     x.set_shape((96, 96, 3))
     print(x.shape)
     x = x / 255
     return  x
 
 @tf.function
 def mvtec_aug(x):
-    x = tfa.image.rotate(x, tf.random.uniform((1,),0,np.pi))
-    x = tfa.image.translate(x, tf.random.uniform((1,2),-0.1*96, 0.1*96))
-    x = tf.image.resize_with_crop_or_pad(x, 64, 64)
+    img_sz = int(configs.dataconfig["mvtec"]["downsample"][0])
+    crop_sz = int(configs.dataconfig["mvtec"]["shape"][0])
+    
+    x = tfa.image.rotate(x, tf.random.uniform((1,),0,np.pi/2))
+    x = tfa.image.translate(x, tf.random.uniform((1,2),-0.1*img_sz, 0.1*img_sz))
+    x = tf.image.resize_with_crop_or_pad(x, crop_sz, crop_sz)
     x = tf.image.random_hue(x, max_delta=0.2)
     x = tf.image.random_contrast(x, 0.9, 1.1)
     x = tf.image.random_brightness(x, max_delta=0.1)
@@ -257,7 +260,7 @@ def preprocess(dataset_name, data, train=True):
         data = data.map(lambda x: tf.image.resize(x["image"], (64,64)))
 
     # Caching offline data
-    data = data.cache()
+#     data = data.cache()
     
     if train and dataset_name in aug_map:
         data = data.map(aug_map[dataset_name],
