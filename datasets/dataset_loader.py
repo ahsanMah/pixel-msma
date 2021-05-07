@@ -210,17 +210,22 @@ def get_brain_segs(x):
 @tf.function
 def mvtec_preproc(x_batch):
     x = x_batch["image"]
-    img_sz = int(configs.dataconfig["mvtec"]["downsample"][0])
+    shape = configs.dataconfig["mvtec"]["downsample"]
+    img_sz = int(shape.split(",")[0].strip())
     x = tf.image.resize(x, (img_sz, img_sz))
 # #     x.set_shape((96, 96, 3))
-    print(x.shape)
+    print("Resized:",  x.shape, img_sz)
     x = x / 255
     return  x
 
 @tf.function
 def mvtec_aug(x):
-    img_sz = int(configs.dataconfig["mvtec"]["downsample"][0])
-    crop_sz = int(configs.dataconfig["mvtec"]["shape"][0])
+    shape = configs.dataconfig["mvtec"]["downsample"]
+    img_sz = int(shape.split(",")[0].strip())
+    
+    shape = configs.dataconfig["mvtec"]["shape"]
+    crop_sz = int(shape.split(",")[0].strip())
+    print("Crop:", crop_sz)
     
     x = tfa.image.rotate(x, tf.random.uniform((1,),0,np.pi/2))
     x = tfa.image.translate(x, tf.random.uniform((1,2),-0.1*img_sz, 0.1*img_sz))
@@ -260,7 +265,7 @@ def preprocess(dataset_name, data, train=True):
         data = data.map(lambda x: tf.image.resize(x["image"], (64,64)))
 
     # Caching offline data
-#     data = data.cache()
+    data = data.cache()
     
     if train and dataset_name in aug_map:
         data = data.map(aug_map[dataset_name],

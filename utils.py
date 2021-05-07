@@ -72,7 +72,7 @@ def find_k_closest(image, k, data_as_array):
 
 
 def get_dataset_image_size(dataset_name):
-    return tuple(int(x) for x in configs.dataconfig[dataset_name]['shape'].split(','))
+    return tuple(int(x.strip()) for x in configs.dataconfig[dataset_name]['shape'].split(','))
 
 
 def check_args_validity(args):

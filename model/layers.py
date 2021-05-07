@@ -64,12 +64,15 @@ class FullPreActivationBlock(layers.Layer):
 class ConditionalFullPreActivationBlock(layers.Layer):
     def __init__(self, activation, filters, kernel_size=3, dilation=1, padding=1, pooling=False):
         super(ConditionalFullPreActivationBlock, self).__init__()
-
+        
+        self.ksz = kernel_size
+        self.dil = dilation
+        self.pad = padding
         self.norm1 = ConditionalInstanceNormalizationPlusPlus2D()
         # FIXME: The number of filters in this convolution should be equal
         # to the input depth, instead of "filters"
         # The depth is increased only in the conv2
-        self.conv1 = DilatedConv2D(filters, kernel_size, dilation, padding)
+#         self.conv1 = DilatedConv2D(filters, kernel_size, dilation, padding)
         self.norm2 = ConditionalInstanceNormalizationPlusPlus2D()
         self.conv2 = DilatedConv2D(filters, kernel_size, dilation, padding)
         self.pooling = pooling
@@ -81,6 +84,7 @@ class ConditionalFullPreActivationBlock(layers.Layer):
 
     def build(self, input_shape):
         begin_filters = input_shape[0][-1]
+        self.conv1 = DilatedConv2D(begin_filters, self.ksz, self.dil, self.pad)
         if begin_filters != self.filters:
             self.increase_channels_skip = layers.Conv2D(self.filters, kernel_size=1, padding='valid')
 

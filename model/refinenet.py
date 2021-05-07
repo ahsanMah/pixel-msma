@@ -5,7 +5,7 @@ from tensorflow.keras.layers import Multiply, concatenate, GlobalAveragePooling2
 
 from model.layers import RefineBlock, ConditionalFullPreActivationBlock, ConditionalInstanceNormalizationPlusPlus2D, FullPreActivationBlock
 
-class RefineNet(keras.Model):
+class RefineNetV1(keras.Model):
     def __init__(self, filters, activation, y_conditioned=False, splits=None):
         super(RefineNet, self).__init__()
         self.in_shape = None
@@ -66,6 +66,70 @@ class RefineNet(keras.Model):
              layers.Input(name="idx_sigmas", shape=(), dtype=tf.int32)]
         return keras.Model(inputs=x, outputs=self.call(x)).summary()
 
+class RefineNet(keras.Model):
+    def __init__(self, filters, activation, y_conditioned=False, splits=None):
+        super(RefineNet, self).__init__()
+        self.in_shape = None
+
+        # Boolean is True when conditional information is concatenated to x
+        self.y_conditioned = y_conditioned
+        self.splits = splits
+
+        self.increase_channels = layers.Conv2D(filters, kernel_size=3, padding='same')
+
+        self.preact_1 = ConditionalFullPreActivationBlock(activation, filters, kernel_size=3)
+        # FIXME: In this second preactivation block we used dilation=1, but it should have been 2
+        self.preact_2 = ConditionalFullPreActivationBlock(activation, filters * 2, kernel_size=3,
+                                                          pooling=True, dilation=2, padding=2)
+        
+        self.preact_3 = ConditionalFullPreActivationBlock(activation, filters * 2, kernel_size=3,
+                                                          dilation=2, padding=2)
+        
+        self.preact_4 = ConditionalFullPreActivationBlock(activation, filters * 2, kernel_size=3,
+                                                          dilation=4, padding=4)
+
+        self.refine_block_1 = RefineBlock(activation, filters, n_blocks_crp=2, n_blocks_begin_rcu=2, n_blocks_end_rcu=3)
+        self.refine_block_2 = RefineBlock(activation, filters * 2, n_blocks_crp=2, n_blocks_begin_rcu=2)
+        self.refine_block_3 = RefineBlock(activation, filters * 2, n_blocks_crp=2, n_blocks_begin_rcu=2)
+        self.refine_block_4 = RefineBlock(activation, filters * 2, n_blocks_crp=2, n_blocks_begin_rcu=2)
+
+        self.norm = ConditionalInstanceNormalizationPlusPlus2D()
+        self.activation = activation
+        self.decrease_channels = None
+
+    def build(self, input_shape):
+        # Here we get the depth of the image that is passed to the model at the start, i.e. 1 for MNIST.
+        self.in_shape = input_shape
+        out_shape = input_shape[0][-1]
+        if self.y_conditioned:
+            out_shape = self.splits[0]
+        
+        self.decrease_channels = layers.Conv2D(out_shape, kernel_size=3, strides=1, padding='same')
+
+    def call(self, inputs, mask=None):
+        x, idx_sigmas = inputs
+        x = self.increase_channels(x)
+
+        output_1 = self.preact_1([x, idx_sigmas])
+        output_2 = self.preact_2([output_1, idx_sigmas])
+        output_3 = self.preact_3([output_2, idx_sigmas])
+        output_4 = self.preact_4([output_3, idx_sigmas])
+
+        output_4 = self.refine_block_4([[output_4], idx_sigmas])
+        output_3 = self.refine_block_3([[output_3, output_4], idx_sigmas])
+        output_2 = self.refine_block_2([[output_2, output_3], idx_sigmas])
+        output_1 = self.refine_block_1([[output_1, output_2], idx_sigmas])
+
+        output = self.norm([output_1, idx_sigmas]) 
+        output = self.activation(output)
+        output = self.decrease_channels(output)
+
+        return output
+
+    def summary(self):
+        x = [layers.Input(name="images", shape=self.in_shape[0][1:]),
+             layers.Input(name="idx_sigmas", shape=(), dtype=tf.int32)]
+        return keras.Model(inputs=x, outputs=self.call(x)).summary()  
 
 class MaskedRefineNet(keras.Model):
     def __init__(self, filters, activation, splits, y_conditioned=False):

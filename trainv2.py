@@ -98,7 +98,6 @@ def main():
     
     # load dataset from tfds (or use downloaded version if exists)
     train_data, test_data = get_train_test_data(configs.config_values.dataset)
-    # train_data = train_data.cache()
 
     # # split data into batches
     train_data = train_data.shuffle(buffer_size=100)
