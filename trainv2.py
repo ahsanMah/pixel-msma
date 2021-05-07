@@ -101,15 +101,14 @@ def main():
     # train_data = train_data.cache()
 
     # # split data into batches
-    train_data = train_data.shuffle(buffer_size=10000)
+    train_data = train_data.shuffle(buffer_size=100)
     if configs.config_values.dataset != 'celeb_a':
         train_data = train_data.batch(configs.config_values.batch_size)
     train_data = train_data.repeat()
     train_data = train_data.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-    test_data = test_data.shuffle(buffer_size=10000)
-    test_data = test_data.batch(configs.config_values.batch_size*4)
-    test_data = test_data.take(4).cache()
+    test_data = test_data.batch(configs.config_values.batch_size)
+    test_data = test_data.take(2).cache()
 
     # path for saving the model(s)
     save_dir, complete_model_name = utils.get_savemodel_dir()

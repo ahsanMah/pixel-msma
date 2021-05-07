@@ -9,7 +9,7 @@ import plotly as py
 import plotly.graph_objs as go
 import matplotlib.pyplot as plt
 
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from skimage import draw
 from sklearn.metrics import roc_curve
 from sklearn.metrics import classification_report, average_precision_score
@@ -102,10 +102,20 @@ def get_metrics(test_score, ood_scores, labels, **kwargs):
         metrics_df = pd.DataFrame(metrics).T * 100 # Percentages
         return metrics_df
 
-def auxiliary_model_analysis(X_train, X_test, outliers, labels, flow_epochs=1000, n_neighbours=5):
+def auxiliary_model_analysis(X_train, X_test, outliers, labels,
+  components_range=range(2,21,2), flow_epochs=1000):
+
+    # def get_metrics(test_score, ood_scores, **kwargs):
+    #     metrics = {}
+    #     for idx, _score in enumerate(ood_scores):
+    #         ood_name = labels[idx+2]
+    #         metrics[ood_name] = ood_metrics(test_score, _score,
+    #                                 names=(labels[1], ood_name))
+    #     metrics_df = pd.DataFrame(metrics).T * 100 # Percentages
+    #     return metrics_df
 
     print("====="*5 + " Training GMM " + "====="*5)
-    best_gmm_clf = train_gmm(X_train,  verbose=True)
+    best_gmm_clf = train_gmm(X_train, components_range=components_range, verbose=True)
     print("---Likelihoods---")
     print("Training: {:.3f}".format(best_gmm_clf.score(X_train)))
     print("{}: {:.3f}".format(labels[1], best_gmm_clf.score(X_test)))
@@ -124,13 +134,17 @@ def auxiliary_model_analysis(X_train, X_test, outliers, labels, flow_epochs=1000
     flow_train_score = flow_model.log_prob(X_train, dtype=np.float32).numpy()
     flow_test_score = flow_model.log_prob(X_test, dtype=np.float32).numpy()
     flow_ood_scores = np.array([flow_model.log_prob(ood, dtype=np.float32).numpy() for ood in outliers])
+
+    
+
     flow_metrics = get_metrics(-flow_test_score, -flow_ood_scores, labels)
     flow_results = result_dict(flow_train_score, flow_test_score, flow_ood_scores, flow_metrics)
     
 
     print("====="*5 + " Training KD Tree " + "====="*5)
 
-    nbrs = NearestNeighbors(n_neighbors=n_neighbours, algorithm='kd_tree').fit(X_train)
+    N_NEIGHBOURS = 5
+    nbrs = NearestNeighbors(n_neighbors=N_NEIGHBOURS, algorithm='kd_tree').fit(X_train)
 
     kd_train_score, indices = nbrs.kneighbors(X_train)
     kd_train_score = kd_train_score[...,-1] # Distances to the kth neighbour
@@ -141,30 +155,32 @@ def auxiliary_model_analysis(X_train, X_test, outliers, labels, flow_epochs=1000
         dists, _ = nbrs.kneighbors(ood)
         kd_ood_scores.append(dists[...,-1]) 
     kd_metrics = get_metrics(kd_test_score, kd_ood_scores, labels)
+
     kd_results = result_dict(kd_train_score, kd_test_score, kd_ood_scores, kd_metrics)
 
     return dict(GMM=gmm_results, Flow=flow_results, KD=kd_results)
 
 
-def train_flow(X_train, X_test, hidden_units=[128, 128], batch_size=128, epochs=1000, verbose=True):
+def train_flow(X_train, X_test, batch_size=128, epochs=1000, verbose=True):
 
     
     # Density estimation with MADE.
     n = X_train.shape[0]
-    made = tfb.AutoregressiveNetwork(params=2, hidden_units=hidden_units, activation="elu")
+    dims = X_train.shape[1]
+    made = tfb.AutoregressiveNetwork(params=2, hidden_units=[128, 128], activation="elu")
 
     distribution = tfd.TransformedDistribution(
-        distribution=tfd.Normal(loc=0., scale=1.),
-        bijector=tfb.MaskedAutoregressiveFlow(made),
-        event_shape=[X_train.shape[1]] # Input dimension of scores (L=10 for our tests)
+        distribution=tfd.Sample(
+          tfd.Normal(loc=0., scale=1.), sample_shape=[dims]),
+        bijector=tfb.MaskedAutoregressiveFlow(made) # Input dimension of scores (L=10 for our tests)
         )
 
     # Construct and fit model.
-    x_ = tfkl.Input(shape=(X_train.shape[1],), dtype=tf.float32)
+    x_ = tfkl.Input(shape=(dims,), dtype=tf.float32)
     log_prob_ = distribution.log_prob(x_)
     model = tfk.Model(x_, log_prob_)
 
-    model.compile(optimizer= tf.optimizers.Adamax(2e-4), #tf.optimizers.Adadelta(learning_rate=0.01),
+    model.compile(optimizer=tf.optimizers.Adadelta(learning_rate=0.01),
                 loss=lambda _, log_prob: -log_prob)
 
     history = model.fit(
@@ -178,7 +194,7 @@ def train_flow(X_train, X_test, hidden_units=[128, 128], batch_size=128, epochs=
         verbose=verbose)
 
     if verbose:
-        start_idx=epochs//2 # First few epoch losses are very large
+        start_idx=5 # First few epoch losses are very large
         plt.plot(range(start_idx, epochs), history.history["loss"][start_idx:], label="Train")
         plt.plot(range(start_idx, epochs), history.history["val_loss"][start_idx:], label="Test")
         plt.legend()
@@ -220,7 +236,7 @@ def compute_weighted_scores(model, x_test):
         progress_bar.set_description("Sigma: {:.4f}".format(sigma))
         _logits = []
         for x_batch in x_test:
-            idx_sigmas = tf.ones(x_batch.shape[0], dtype=tf.float32) * idx
+            idx_sigmas = tf.ones(x_batch.shape[0], dtype=tf.int32) * idx
             score = model([x_batch, idx_sigmas]) * sigma
             score = reduce_norm(score)
             _logits.append(score)

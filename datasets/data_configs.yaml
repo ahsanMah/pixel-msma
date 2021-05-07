@@ -1,5 +1,6 @@
 mvtec:
   datadir: "/DATA/Users/amahmood/GDrive/MVTec_AD/"
+  datadir_gdrive: "/content/drive/MyDrive/ML_Datasets/MvTec_AD/"
   shape: 64, 64, 3   # Shape for training after crop
   downsample: 96, 96, 3  # Shape after downsampling (before crop)
   batch_size: 32
