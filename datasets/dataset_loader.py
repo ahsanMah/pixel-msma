@@ -23,17 +23,18 @@ BRAIN_LABELS = ["background", "CSF", "gray matter", "white matter",
 def load_data(dataset_name):
     # load data from tfds
     
-    if dataset_name == "mvtec":
+    if "mvtec" in dataset_name:
         base_path = configs.dataconfig[dataset_name]["datadir"]
         dataset_dir =f"/{base_path}/{configs.config_values.class_label}/"
         
-        builder = tfds.ImageFolder(dataset_dir)
-        val_size = int(0.1*builder.info.splits["train"].num_examples)
-        configs.dataconfig[dataset_name]["n_samples"] = builder.info.splits["train"].num_examples
-        
-        ds = builder.as_dataset(split='train', shuffle_files=False)
-        train_ds = ds.skip(val_size)
-        val_ds = ds.take(val_size)
+        with tf.device("cpu"):
+            builder = tfds.ImageFolder(dataset_dir)
+            val_size = int(0.1*builder.info.splits["train"].num_examples)
+            configs.dataconfig[dataset_name]["n_samples"] = builder.info.splits["train"].num_examples
+
+            ds = builder.as_dataset(split='train', shuffle_files=False)
+            train_ds = ds.skip(val_size)
+            val_ds = ds.take(val_size)
         
         return train_ds, val_ds
     
@@ -210,7 +211,7 @@ def get_brain_segs(x):
 @tf.function
 def mvtec_preproc(x_batch):
     x = x_batch["image"]
-    shape = configs.dataconfig["mvtec"]["downsample"]
+    shape = configs.dataconfig[configs.config_values.dataset]["downsample"]
     img_sz = int(shape.split(",")[0].strip())
     x = tf.image.resize(x, (img_sz, img_sz))
 # #     x.set_shape((96, 96, 3))
@@ -220,10 +221,10 @@ def mvtec_preproc(x_batch):
 
 @tf.function
 def mvtec_aug(x):
-    shape = configs.dataconfig["mvtec"]["downsample"]
+    shape = configs.dataconfig[configs.config_values.dataset]["downsample"]
     img_sz = int(shape.split(",")[0].strip())
     
-    shape = configs.dataconfig["mvtec"]["shape"]
+    shape = configs.dataconfig[configs.config_values.dataset]["shape"]
     crop_sz = int(shape.split(",")[0].strip())
     print("Crop:", crop_sz)
     
@@ -239,6 +240,7 @@ def mvtec_aug(x):
 
 preproc_map = {
     "mvtec": mvtec_preproc,
+    "mvtec_lowres": mvtec_preproc,
     "brain": get_brain_only,
     "masked_brain": get_brain_masks,
     "seg_brain": get_brain_segs,
@@ -249,7 +251,8 @@ preproc_map = {
 }
 
 aug_map = {
-    "mvtec": mvtec_aug
+    "mvtec": mvtec_aug,
+    "mvtec_lowres": mvtec_aug
 }
 
 def preprocess(dataset_name, data, train=True):

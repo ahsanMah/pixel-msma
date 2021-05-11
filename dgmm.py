@@ -15,6 +15,7 @@ tfb = tfp.bijectors
 tfd = tfp.distributions
 tfpl = tfp.layers
 # tf.enable_v2_behavior()
+tf.data.AUTOTUNE = tf.data.experimental.AUTOTUNE
 
 EPSILON = 1e-5
 
@@ -204,7 +205,7 @@ def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10, receptive_field_sz = 4):
     # Get score-norms of just the patches
     x_patch = tf.where(mask[..., tf.newaxis,tf.newaxis], s, tf.zeros_like(s))
     print(x_patch.shape)
-    x_patch = tf.reshape(x_patch, shape=[-1, 96*96*3, sigma_l])
+    x_patch = tf.reshape(x_patch, shape=[-1, img_w*img_h*3, sigma_l])
     print(x_patch.shape)
     score = tf.norm(x_patch, axis=1, ord="euclidean")
 

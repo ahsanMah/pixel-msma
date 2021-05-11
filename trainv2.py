@@ -105,7 +105,7 @@ def main():
         train_data = train_data.batch(configs.config_values.batch_size)
     train_data = train_data.repeat()
     train_data = train_data.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
-
+    
     test_data = test_data.batch(configs.config_values.batch_size)
     test_data = test_data.take(2).cache()
 

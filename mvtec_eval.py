@@ -1,5 +1,10 @@
+#! /usr/bin/python3
+
 import os,sys,pickle
 import pathlib,glob
+import yaml
+import argparse
+# print("Using GPU:", os.environ["CUDA_VISIBLE_DEVICES"])
 
 import tensorflow as tf
 import pandas as pd
@@ -11,7 +16,8 @@ import matplotlib.pyplot as plt
 import tensorflow_probability as tfp
 import tensorflow.keras as tfk
 import tensorflow_datasets as tfds
-import argparse
+from tqdm.auto import tqdm
+
 
 from dgmm import DGMM, trainer, get_patch_loaders
 from ood_detection_helper import *
@@ -27,20 +33,14 @@ plt.rcParams['axes.titlesize'] = 18
 plt.rcParams['axes.labelsize'] = 16
 sns.set(style="darkgrid")
 
-BASE_PATH = "/content/drive/MyDrive/"
-WORKDIR = "/Developer/pixel-msma"
-os.chdir(BASE_PATH + WORKDIR)
-sys.path.append(os.path.join(BASE_PATH, WORKDIR))
+# BASE_PATH = "/content/drive/MyDrive/"
+# BASE_PATH = "./"
+# WORKDIR = "/Developer/pixel-msma"
+# os.chdir(BASE_PATH + WORKDIR)
+# sys.path.append(os.path.join(BASE_PATH, WORKDIR))
 
 RANDOM_SEED  = 42
-SIGMA_HIGH = 1.0
-SIGMA_LOW  = 1e-2
-NUM_L = 10
-SIGMA_LEVELS = tf.math.exp(
-    tf.linspace(tf.math.log(SIGMA_HIGH),
-                tf.math.log(SIGMA_LOW),
-                NUM_L)
-    )
+
 
 parser = argparse.ArgumentParser(description='Evaluation Options')
 parser.add_argument('--experiment', default='train',
@@ -53,8 +53,18 @@ parser.add_argument('--img_sz', default=96, type=int,
                     help="Size of image tensors used for training")
 parser.add_argument('--n_epochs', default=50, type=int,
                         help="Size of image tensors used for training")
-parser.add_argument('--save_path', default='saved_models/theia', type=str,
+parser.add_argument('--save_path', default='saved_models/', type=str,
                         help="Size of image tensors used for training")
+
+#### NCSN Arguments #####
+parser.add_argument('--filters', default=128, type=int,
+                        help='number of filters in the model. (default: 128)')
+parser.add_argument('--num_L', default=10, type=int,
+                    help="number of levels of noise to use (default: 10)")
+parser.add_argument('--sigma_low', default=0.01, type=float,
+                    help="lowest value for noise (default: 0.01)")
+parser.add_argument('--sigma_high', default=1.0, type=float,
+                    help="highest value for noise (default: 1.0)")
 
 args = parser.parse_args()
 print(args)
@@ -62,14 +72,33 @@ print(args)
 OBJECT = args.object
 EXPERIMENT = args.experiment
 MODEL_PATH = args.save_path
-SCORE_CACHE = os.path.join("score_cache","mvtec",f"{OBJECT}_scores")
 IMG_W= args.img_sz
 IMG_H= args.img_sz
-BS=64
+BS=128
 N_EPOCHS = args.n_epochs
 R_SZ = args.r_sz
 
-dataset_dir = BASE_PATH + f"ML_Datasets/MvTec_AD/{OBJECT}/"
+N_FILTERS = args.filters
+SIGMA_HIGH = args.sigma_high
+SIGMA_LOW  = args.sigma_low
+NUM_L = args.num_L
+SIGMA_LEVELS = tf.math.exp(
+    tf.linspace(tf.math.log(SIGMA_HIGH),
+                tf.math.log(SIGMA_LOW),
+                NUM_L)
+)
+
+cache_dir = os.path.join("score_cache", "mvtec")
+os.makedirs("score_cache/mvtec", exist_ok=True)
+SCORE_CACHE = os.path.join(cache_dir,
+                           f"{OBJECT}_f{N_FILTERS}_L{NUM_L}scores.npz")
+
+with open("./datasets/data_configs.yaml") as f:
+    dataconfig = yaml.safe_load(f)
+
+dataset_dir = dataconfig["mvtec"]["datadir"] + f"/{OBJECT}/"
+# dataset_resized_dir = os.path.join(dataconfig["mvtec"]["datadir"], "..", f"mvtec_imgs/{OBJECT}")
+dataset_resized_dir = os.path.join("mvtec_imgs", f"{OBJECT}")
 train_dir = pathlib.Path(f"{dataset_dir}/train/")
 test_dir = pathlib.Path(f"{dataset_dir}/test/")
 seg_dir = pathlib.Path(f"{dataset_dir}/ground_truth/")
@@ -99,10 +128,10 @@ def weighted_norm(x, sigmas):
     x  = x * sigmas
     return x
 
-def compute_scores(xs):
+def compute_scores(model, xs):
   scores = []
 
-  for x,y in xs:
+  for x,y in tqdm(xs):
     # x = tf.expand_dims(xs[i],0)
     per_sigma_scores = []
     for idx,sigma_val in enumerate(SIGMA_LEVELS):
@@ -147,10 +176,10 @@ def build_ds_loaders():
   return train_ds, test_ds, seg_ds
 
 def load_img_data(as_tfds=False):
-  dirname = f"/content/drive/MyDrive/ML_Datasets/mvtec_imgs/{OBJECT}/"
-  fname = os.path.join(dirname, f"{IMG_W}x{IMG_H}.npz")
+#   dirname = f"/content/drive/MyDrive/ML_Datasets/mvtec_imgs/{OBJECT}/"
+  fname = os.path.join(dataset_resized_dir, f"{IMG_W}x{IMG_H}.npz")
 
-  if os.path.exists(fname):
+  if os.path.exists(fname) and not as_tfds:
     with np.load(fname) as img_data:
       train_ds_imgs = img_data["train"]
       test_ds_imgs = img_data["test"]
@@ -165,7 +194,7 @@ def load_img_data(as_tfds=False):
     seg_ds_imgs = tf.concat([x for x,l in seg_ds], axis=0).numpy()
     test_labels = tf.concat([l for x,l in test_ds], axis=0).numpy()
 
-    os.makedirs(dirname, exist_ok=True)
+    os.makedirs(dataset_resized_dir, exist_ok=True)
     np.savez_compressed(
         fname,
         train= train_ds_imgs,
@@ -205,40 +234,52 @@ Runs NCSN and caches score results
 def ncsn_runner():
   
   if os.path.exists(SCORE_CACHE):
-    return
+    print("Using score cache...")
+    data = np.load(SCORE_CACHE)
+    train_score_tensors = data["train"]
+    test_score_tensors = data["test"]
+    
+    return train_score_tensors, test_score_tensors
 
   train_ds, test_ds, seg_ds = build_ds_loaders()
   test_ds = test_ds.cache()
 
-  model, args = load_model(inlier_name="mvtec", checkpoint=-1, filters=64, num_L=10,
-                    save_path=MODEL_PATH,
-                    class_label=OBJECT)
+  model, args = load_model(
+      inlier_name="mvtec", checkpoint=-1, 
+      filters=N_FILTERS, num_L=NUM_L,
+      save_path=MODEL_PATH,
+      class_label=OBJECT
+  )
   model.trainable = False
 
-  train_score_tensors = compute_scores(train_ds).numpy()
-  test_score_tensors = compute_scores(test_ds).numpy()
+  train_score_tensors = compute_scores(model, train_ds).numpy()
+  test_score_tensors = compute_scores(model, test_ds).numpy()
 
+#   test_labels = []
+#   for x,l in test_ds:
+#     test_labels.append(l.numpy())
+#   test_labels = np.concatenate(test_labels, axis=0)
+  
+  np.savez_compressed(
+    (SCORE_CACHE),
+    train = train_score_tensors,
+    test =  test_score_tensors,
+  )
+
+  return train_score_tensors, test_score_tensors
+
+def msma_runner():
+
+  train_scores, test_scores = ncsn_runner()
+  
+  train_ds, test_ds, seg_ds = build_ds_loaders()
   test_labels = []
   for x,l in test_ds:
     test_labels.append(l.numpy())
   test_labels = np.concatenate(test_labels, axis=0)
-
-  np.savez_compressed(
-    os.path.join("score_cache","mvtec",f"{OBJECT}_scores"),
-    {
-      "train": train_score_tensors,
-      "test": test_score_tensors,
-    })
-
-  return
-
-def msma_runner():
-  ncsn_runner()
-
-  train_scores, test_scores, test_labels = np.load(SCORE_CACHE)
-
-  train_norms = weighted_norm(train_scores)
-  test_norms = weighted_norm(test_scores)
+     
+  train_norms = weighted_norm(train_scores, SIGMA_LEVELS)
+  test_norms = weighted_norm(test_scores, SIGMA_LEVELS)
 
   metrics = auxiliary_model_analysis(
                 train_norms,
@@ -246,22 +287,27 @@ def msma_runner():
                 [test_norms[test_labels==idx] for idx in ANO_LABELS_IDX],
                 labels=["Train", "Inlier"]+ANO_LABELS,
                 components_range=range(1,11,1),
-                flow_epochs=1)
+                flow_epochs=1
+  )
 
+  
+    
   return metrics
 
 def dgmm_trainer():
 
   train_ds_imgs, test_ds_imgs, seg_ds_imgs, test_labels = load_img_data()
 
-  data = np.load(f"{SCORE_CACHE}.npz")
-  train_score_tensors = data["arr_0"]
-  test_score_tensors = data["arr_1"]
+#   data = np.load(f"{SCORE_CACHE}")
+#   train_score_tensors = data["arr_0"]
+#   test_score_tensors = data["arr_1"]
+    
+  train_score_tensors, test_score_tensors = ncsn_runner()
 
   TRAIN_SZ = 64
   TEST_SZ = 1
 
-  train_builder, test_builder = get_patch_loaders(IMG_W, IMG_H, receptive_field_sz=R_SZ)
+  train_builder, test_builder = get_patch_loaders(IMG_W, IMG_H, sigma_l=NUM_L, receptive_field_sz=R_SZ)
   train_patch_ds = train_builder(
                     train_ds_imgs,
                     train_score_tensors,
