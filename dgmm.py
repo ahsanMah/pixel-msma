@@ -139,18 +139,29 @@ def train_step(model, x, y, optimizer):
   optimizer.apply_gradients(zip(gradients, model.trainable_variables))
   return loss
 
-def build_anchors(img_w, img_h, receptive_field_sz=4):
-  stride = receptive_field_sz
-  start = receptive_field_sz // 2 - 1
-
+def build_anchors(img_w, img_h, receptive_field_sz=4, stride=None):
+  stride = stride if stride else receptive_field_sz 
+  start = receptive_field_sz // 2
+  end_w = img_w - receptive_field_sz // 2 + 1
+  end_h = img_h - receptive_field_sz // 2 + 1
+    
   # List of anchors denoting midpoint of patches  
-  c_x = np.arange(start, img_w, stride)
-  c_y = np.arange(start, img_h, stride)
+  c_x = np.arange(start, end_w, stride)
+  c_y = np.arange(start, end_h, stride)
   shift_x, shift_y = np.meshgrid(c_x,c_y)
   shift_x, shift_y = shift_x.reshape(-1), shift_y.reshape(-1)
   anchors = np.column_stack((shift_x, shift_y)).astype(dtype=np.int32)
   
   return anchors
+
+def get_overlap_map(img_sz, r_sz, anchors):
+    counts = np.zeros(shape=(img_sz,img_sz))
+
+    for x,y in anchors:
+        counts[x-r_sz//2: x+r_sz//2,
+               y-r_sz//2: y+r_sz//2] += 1
+    
+    return counts
 
 def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10, receptive_field_sz = 4):
 
