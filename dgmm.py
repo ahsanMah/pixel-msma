@@ -10,6 +10,7 @@ from tensorflow.keras import regularizers
 from tensorflow.keras import mixed_precision
 
 from tqdm.auto import tqdm
+from numba import njit
 
 tfb = tfp.bijectors
 tfd = tfp.distributions
@@ -154,6 +155,7 @@ def build_anchors(img_w, img_h, receptive_field_sz=4, stride=None):
   
   return anchors
 
+@njit
 def get_overlap_map(img_sz, r_sz, anchors):
     counts = np.zeros(shape=(img_sz,img_sz))
 
@@ -163,16 +165,18 @@ def get_overlap_map(img_sz, r_sz, anchors):
     
     return counts
 
-def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10, receptive_field_sz = 4):
+def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10,
+                      receptive_field_sz=4, stride=None):
 
   # List of anchors denoting midpoint of patches 
-  ANCHORS = tf.constant(build_anchors(img_w, img_h, receptive_field_sz))
+  ANCHORS = tf.constant(build_anchors(img_w, img_h, receptive_field_sz, stride))
+  overlap_counts = get_overlap_map(img_w, receptive_field_sz, ANCHORS)
   print("Anchors:", ANCHORS.shape)
 
   @tf.function
   def get_test_patches(x_batch):
     
-    offsets = tf.tile(ANCHORS, [x_batch["image"].shape[0], 1])
+    # offsets = tf.tile(ANCHORS, [x_batch["image"].shape[0], 1])
     offsets = ANCHORS #tf.tile(ANCHORS, [x_batch["image"].shape[0], 1])
 
     print("Offset shape:", offsets.shape)
@@ -190,7 +194,9 @@ def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10, receptive_field_sz = 4):
     x_patch = tf.where(mask[..., tf.newaxis,tf.newaxis], s, tf.zeros_like(s))
     print("Patch:", x_patch.shape)
     # x_patch = tf.reshape(x_patch, shape=[-1, receptive_field_sz*receptive_field_sz*nc, sigma_l])
-    x_patch = tf.reshape(x_patch, shape=[x_patch.shape[0], -1, sigma_l])
+    # x_patch = tf.reshape(x_patch, shape=[x_patch.shape[0], -1, sigma_l])
+    x_patch = tf.reshape(x_patch, shape=[-1, img_w*img_h*nc, sigma_l])
+
     print("Flat Patch:", x_patch.shape)
     score = tf.norm(x_patch, axis=1, ord="euclidean")
 
@@ -233,8 +239,8 @@ def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10, receptive_field_sz = 4):
     ds = {"image": tf.cast(x, tf.float32),
           "score": tf.cast(s, tf.float32)}
     ds = tf.data.Dataset.from_tensor_slices(ds)
-    ds = ds.batch(batch_sz, drop_remainder=True)
-    ds = ds.map(get_test_patches).cache()
+    ds = ds.batch(batch_sz, drop_remainder=False)
+    ds = ds.map(get_test_patches, num_parallel_calls=tf.data.AUTOTUNE)
     # ds = ds.interleave(get_test_patches, cycle_length=1)
     # ds = ds.map(preproc)
     ds = ds.prefetch(tf.data.AUTOTUNE)
@@ -251,7 +257,7 @@ def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10, receptive_field_sz = 4):
     ds = ds.prefetch(tf.data.AUTOTUNE)
     return ds
 
-  return build_train_ds, build_test_ds
+  return build_train_ds, build_test_ds, overlap_counts
 
 '''
 Starts a fresh round of training for `n_epochs`
