@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import norm
 
 import configs
-from model.refinenet import RefineNet
+from model.refinenet import RefineNet, RefineNetTwoResidual
 # from model.resnet import ResNet
 
 dict_datasets_image_size = {
@@ -108,6 +108,7 @@ def _build_parser():
                         help="batch size (default: 128)")
     parser.add_argument('--samples_dir', default='./samples/',
                         help="folder for saving samples (default: ./samples/)")
+    
     parser.add_argument('--checkpoint_dir', default='./saved_models/',
                         help="folder for saving model checkpoints (default: ./saved_models/)")
     parser.add_argument('--checkpoint_freq', default=5000, type=int,
@@ -116,6 +117,9 @@ def _build_parser():
                         help="whether to resume from latest checkpoint (default: True)")
     parser.add_argument('--resume_from', default=-1, type=int,
                         help='Step of checkpoint where to resume the model from. (default: latest one)')
+    parser.add_argument('--log_freq', default=100, type=int,
+                        help="how often to save a model checkpoint (default: 5000 iterations)")
+    
     parser.add_argument('--init_samples', default="",
                         help="Folder with images to be used as x0 for sampling with annealed langevin dynamics")
     parser.add_argument('--k', default=10, type=int,

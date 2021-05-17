@@ -167,7 +167,7 @@ def train_flow(X_train, X_test, batch_size=128, epochs=1000, verbose=True):
     # Density estimation with MADE.
     n = X_train.shape[0]
     dims = X_train.shape[1]
-    made = tfb.AutoregressiveNetwork(params=2, hidden_units=[128, 128], activation="elu")
+    made = tfb.AutoregressiveNetwork(params=2, hidden_units=[256, 256], activation="swish")
 
     distribution = tfd.TransformedDistribution(
         distribution=tfd.Sample(
@@ -335,7 +335,10 @@ def ood_metrics(inlier_score, outlier_score, plot=False, verbose=False,
         tpr80_idx = np.where(np.isclose(tpr,0.8, rtol=1e-2, atol=1e-3))[0][0]
     else:
         # This is becasuse numpy bugs out when the scores are fully separable
-        tpr95_idx, tpr80_idx = 0,0 #tpr95_idx
+        # OR fully unseparable :D
+        tpr95_idx = np.where(np.isclose(tpr,0.95, rtol=1e-1, atol=1e-1))[0][0]
+        tpr80_idx = np.where(np.isclose(tpr,0.8, rtol=1e-1, atol=1e-1))[0][0]
+#         tpr95_idx, tpr80_idx = 0,0 #tpr95_idx
 
     # Detection Error
     de = np.min(0.5 - tpr/2 + fpr/2) 
@@ -433,30 +436,30 @@ def evaluate_model(train_score, inlier_score, outlier_scores, labels, ylim=None,
     axs = np.array(axs).reshape(-1) # Makes axs into list even if row num is 1
     colors = sns.color_palette("bright") + sns.color_palette("dark")
     
-    sns.distplot(train_score, color=colors[0], label=labels[0], ax=axs[0], **kwargs)
-    sns.distplot(inlier_score, color=colors[1], label=labels[1], ax=axs[0], **kwargs)
+    sns.histplot(train_score, color=colors[0], label=labels[0], ax=axs[0], **kwargs)
+    sns.histplot(inlier_score, color=colors[1], label=labels[1], ax=axs[0], **kwargs)
     
     offset = 2
     for idx, _score in enumerate(outlier_scores):
         idx += offset
-        sns.distplot(_score, color=colors[idx], label=labels[idx], ax=axs[0], **kwargs)    
+        sns.histplot(_score, color=colors[idx], label=labels[idx], ax=axs[0], **kwargs)    
 
     # Plot in pairs    
     if len(outlier_scores) > 0 :
         offset = 0
         for row in range(1, axs.shape[0]):
-            sns.distplot(inlier_score, color=colors[1], label=labels[1], ax=axs[row], **kwargs)
+            sns.histplot(inlier_score, color=colors[1], label=labels[1], ax=axs[row], **kwargs)
             
     #         for idx in range(offset, min(len(outlier_sc)offset+2)):
             for idx, _score in enumerate(outlier_scores[offset: offset+2]):
                 idx += offset + 2
-                sns.distplot(_score, color=colors[idx], label=labels[idx], ax=axs[row], **kwargs)    
+                sns.histplot(_score, color=colors[idx], label=labels[idx], ax=axs[row], **kwargs)    
             offset = 2 * row
         
     for ax in axs:
         ax.legend()
         ax.set_ylim(top=ylim)
-        ax.set_xlim(left=xlim, right=100 if xlim else None)
+        ax.set_xlim(left=xlim, right=10 if xlim else None)
 
 #     plt.show()
     
@@ -479,7 +482,7 @@ def train_gmm(X_train, components_range=range(2,21,2) ,verbose=False):
 
     grid = GridSearchCV(estimator=gmm_clf,
                         param_grid=param_grid,
-                        cv=10, n_jobs=10,
+                        cv=10, n_jobs=1,
                         verbose=1)
 
     grid_result = grid.fit(X_train)

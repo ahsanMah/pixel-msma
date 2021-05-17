@@ -168,10 +168,12 @@ def get_overlap_map(img_sz, r_sz, anchors):
 def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10,
                       receptive_field_sz=4, stride=None):
 
-  # List of anchors denoting midpoint of patches 
+  # List of anchors denoting midpoint of patches
   ANCHORS = tf.constant(build_anchors(img_w, img_h, receptive_field_sz, stride))
   overlap_counts = get_overlap_map(img_w, receptive_field_sz, ANCHORS)
+  rsz_choices = tf.range(receptive_field_sz//8, receptive_field_sz+1, 2)
   print("Anchors:", ANCHORS.shape)
+  print("Receptive Field choices:", rsz_choices.shape[0])
 
   @tf.function
   def get_test_patches(x_batch):
@@ -212,7 +214,12 @@ def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10,
   @tf.function
   def get_random_patches(x,s):
     x = x + EPSILON
-    x = tfa.image.random_cutout(x, mask_size=(receptive_field_sz, receptive_field_sz),
+    # Choosing random patch sizes
+    idx = tf.random.uniform((1,),0, rsz_choices.shape[0],dtype=tf.dtypes.int32)
+    rsz = tf.gather(rsz_choices, idx)
+
+    mask_sz = tf.repeat(rsz, 2)
+    x = tfa.image.random_cutout(x, mask_size=mask_sz,
                                 constant_values=0.0)
     
     # Generate mask for cut pixels

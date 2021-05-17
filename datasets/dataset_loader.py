@@ -228,14 +228,18 @@ def mvtec_aug(x):
     crop_sz = int(shape.split(",")[0].strip())
     print("Crop:", crop_sz)
     
+    translate_ratio = 0.5 * (crop_sz / img_sz)
+    
     x = tfa.image.rotate(x, tf.random.uniform((1,),0,np.pi/2))
-    x = tfa.image.translate(x, tf.random.uniform((1,2),-0.1*img_sz, 0.1*img_sz))
+    x = tfa.image.translate(x, tf.random.uniform((1,2),
+                            -translate_ratio*img_sz, translate_ratio*img_sz))
     x = tf.image.resize_with_crop_or_pad(x, crop_sz, crop_sz)
-    x = tf.image.random_hue(x, max_delta=0.2)
+    x = tf.image.random_hue(x, max_delta=0.02)
     x = tf.image.random_contrast(x, 0.9, 1.1)
     x = tf.image.random_brightness(x, max_delta=0.1)
     x = tf.image.random_flip_left_right(x)
     x = tf.image.random_flip_up_down(x)
+    
     return  x
 
 preproc_map = {

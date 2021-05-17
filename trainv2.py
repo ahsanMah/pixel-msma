@@ -22,6 +22,7 @@ def main():
     device = utils.get_tensorflow_device()
     tf.random.set_seed(2019)
     LOG_FREQ = 100
+    LOG_FREQ = configs.config_values.log_freq
     SIGMA_LEVELS = utils.get_sigma_levels()
     NUM_L = configs.config_values.num_L
     
