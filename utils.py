@@ -1,6 +1,6 @@
 import argparse
 import os
-import re # Adding more code
+import re  # Adding more code
 import yaml
 import tensorflow as tf
 import matplotlib.pyplot as plt
@@ -11,13 +11,13 @@ from model.refinenet import RefineNet, RefineNetTwoResidual
 # from model.resnet import ResNet
 
 dict_datasets_image_size = {
-    "circles": (64,64,1),
-    "highres": (2048,1024,3),
-    "brain": (91,109,1),
-    "masked_brain": (91,109,2),
-    "seg_brain": (91,109,8),
-    "pet" : (64,64,3),
-    "masked_pet" : (64,64,4),
+    "circles": (64, 64, 1),
+    "highres": (2048, 1024, 3),
+    "brain": (91, 109, 1),
+    "masked_brain": (91, 109, 2),
+    "seg_brain": (91, 109, 8),
+    "pet": (64, 64, 3),
+    "masked_pet": (64, 64, 4),
     "blown_fashion": (56, 56, 1),
     "blown_masked_fashion": (56, 56, 2),
     'masked_fashion': (28, 28, 2),
@@ -25,9 +25,9 @@ dict_datasets_image_size = {
     'mnist_ood': (28, 28, 1),
     'mnist': (28, 28, 1),
     'cifar10': (32, 32, 3),
-    "masked_cifar10": (32,32,4),
-    "seg_cifar10": (32,32,14),
-    "multiscale_cifar10": (32,32,6),
+    "masked_cifar10": (32, 32, 4),
+    "seg_cifar10": (32, 32, 14),
+    "multiscale_cifar10": (32, 32, 6),
     'celeb_a': (32, 32, 3),
     "svhn_cropped": (32, 32, 3),
 }
@@ -41,9 +41,9 @@ dict_train_size = {
     "seg_brain": 10500,
     "masked_cifar10": 40000,
     "seg_cifar10": 40000,
-    "multiscale_cifar10":50000,
-    "pet" : 6500,
-    "masked_pet" : 6500,
+    "multiscale_cifar10": 50000,
+    "pet": 6500,
+    "masked_pet": 6500,
     "blown_fashion": 60000,
     "blown_masked_fashion": 60000,
     'masked_fashion': 60000,
@@ -53,19 +53,21 @@ dict_train_size = {
 }
 
 dict_splits = {
-    "masked_fashion": (1,1),
-    "masked_brain": (1,1),
-    "seg_brain": (1,7),
-    "masked_cifar10": (3,1),
-    "seg_cifar10": (3,11),
-    "multiscale_cifar10": (3,3)
+    "masked_fashion": (1, 1),
+    "masked_brain": (1, 1),
+    "seg_brain": (1, 7),
+    "masked_cifar10": (3, 1),
+    "seg_cifar10": (3, 11),
+    "multiscale_cifar10": (3, 3)
 }
 
 with open("./datasets/data_configs.yaml") as f:
     configs.dataconfig = yaml.safe_load(f)
 
+
 def find_k_closest(image, k, data_as_array):
-    l2_distances = tf.reduce_sum(tf.square(data_as_array - image), axis=[1, 2, 3])
+    l2_distances = tf.reduce_sum(
+        tf.square(data_as_array - image), axis=[1, 2, 3])
     _, smallest_idx = tf.math.top_k(-l2_distances, k)
     closest_k = tf.gather(data_as_array, smallest_idx[:k])
     return closest_k, smallest_idx[:k]
@@ -76,16 +78,19 @@ def get_dataset_image_size(dataset_name):
 
 
 def check_args_validity(args):
-    assert args.model in ["baseline", "resnet", "refinenet", "refinenet_twores", "masked_refinenet"]
+    assert args.model in ["baseline", "resnet",
+                          "refinenet", "refinenet_twores", "masked_refinenet"]
     if args.max_to_keep == -1:
         args.max_to_keep = None
     args.split = args.split.split(",")
     args.split = list(map(lambda x: x.strip(), args.split))
     return
 
+
 def _build_parser():
     parser = argparse.ArgumentParser(description='CLI Options')
-    parser.add_argument('--experiment', default='train', help="what experiment to run (default: train)")
+    parser.add_argument('--experiment', default='train',
+                        help="what experiment to run (default: train)")
     parser.add_argument('--dataset', default='mnist',
                         help="tfds name of dataset (default: 'mnist')")
     parser.add_argument('--model', default='refinenet',
@@ -108,7 +113,7 @@ def _build_parser():
                         help="batch size (default: 128)")
     parser.add_argument('--samples_dir', default='./samples/',
                         help="folder for saving samples (default: ./samples/)")
-    
+
     parser.add_argument('--checkpoint_dir', default='./saved_models/',
                         help="folder for saving model checkpoints (default: ./saved_models/)")
     parser.add_argument('--checkpoint_freq', default=5000, type=int,
@@ -119,7 +124,7 @@ def _build_parser():
                         help='Step of checkpoint where to resume the model from. (default: latest one)')
     parser.add_argument('--log_freq', default=100, type=int,
                         help="how often to save a model checkpoint (default: 5000 iterations)")
-    
+
     parser.add_argument('--init_samples', default="",
                         help="Folder with images to be used as x0 for sampling with annealed langevin dynamics")
     parser.add_argument('--k', default=10, type=int,
@@ -142,6 +147,7 @@ def _build_parser():
                         help="which class label to use for training, applies to mvtec")
     return parser
 
+
 def get_command_line_args():
     parser = _build_parser()
 
@@ -155,7 +161,7 @@ def get_command_line_args():
     s += "=" * 20 + "\n"
 
     print(s)
-    
+
     return parser
 
 
@@ -168,23 +174,24 @@ def get_tensorflow_device():
 def get_savemodel_dir():
     models_dir = configs.config_values.checkpoint_dir
     model_name = configs.config_values.model
-    
+
     # Folder name: model_name+filters+dataset+L
     complete_model_name = '{}{}_{}-{}_L{}_SH{:.0e}_SL{:.0e}/'.format(
         model_name, configs.config_values.filters, configs.config_values.dataset,
         configs.config_values.class_label, configs.config_values.num_L,
         configs.config_values.sigma_high, configs.config_values.sigma_low)
-    folder_name = os.path.join(models_dir, complete_model_name) #+ '/'
-    os.makedirs(folder_name, exist_ok=True) 
-    
+    folder_name = os.path.join(models_dir, complete_model_name)  # + '/'
+    os.makedirs(folder_name, exist_ok=True)
+
     return folder_name, complete_model_name
 
 
 def evaluate_print_model_summary(model, verbose=True):
     batch = 1
-    input_shape = (batch,) + get_dataset_image_size(configs.config_values.dataset)
+    input_shape = (batch,) + \
+        get_dataset_image_size(configs.config_values.dataset)
     print(input_shape)
-    sigma_levels= get_sigma_levels() #tf.linspace(0.0,1.0,3) # 
+    sigma_levels = get_sigma_levels()  # tf.linspace(0.0,1.0,3) #
     idx_sigmas = tf.ones(batch, dtype=tf.int32)
 #     sigmas = tf.gather(sigma_levels, idx_sigmas)
 #     sigmas = tf.cast(tf.reshape(sigmas, shape=(batch, 1, 1, 1)), dtype=tf.float32)
@@ -192,6 +199,7 @@ def evaluate_print_model_summary(model, verbose=True):
     model(x)
     if verbose:
         print(model.summary())
+
 
 def attach_ocnn(top=True, encoding=False):
     pass
@@ -205,44 +213,47 @@ def try_load_model(save_dir, step_ckpt=-1, return_new_model=True, verbose=True, 
     :param verbose: true for printing the model summary
     :return:
     """
-    ocnn_model=None
-    ocnn_optimizer=None
+    ocnn_model = None
+    ocnn_optimizer = None
 
     import tensorflow as tf
     tf.compat.v1.enable_v2_behavior()
     if configs.config_values.model == 'baseline':
         configs.config_values.num_L = 1
 
-    splits=False
+    splits = False
     if configs.config_values.y_cond:
         splits = dict_splits[configs.config_values.dataset]
 
     # initialize return values
     model_name = configs.config_values.model
     if model_name == 'resnet':
-        model = ResNet(filters=configs.config_values.filters, activation=tf.nn.elu)
+        model = ResNet(filters=configs.config_values.filters,
+                       activation=tf.nn.elu)
     elif model_name in ['refinenet', 'baseline']:
         model = RefineNet(filters=configs.config_values.filters, activation=tf.nn.elu,
-        y_conditioned=configs.config_values.y_cond, splits=splits)
+                          y_conditioned=configs.config_values.y_cond, splits=splits)
     elif model_name == 'refinenet_twores':
-        model = RefineNetTwoResidual(filters=configs.config_values.filters, activation=tf.nn.elu)
+        model = RefineNetTwoResidual(
+            filters=configs.config_values.filters, activation=tf.nn.elu)
     elif model_name == 'masked_refinenet':
         print("Using Masked RefineNet...")
-        # assert configs.config_values.y_cond 
-        model = MaskedRefineNet(filters=configs.config_values.filters, activation=tf.nn.elu, 
-        splits=dict_splits[configs.config_values.dataset], y_conditioned=configs.config_values.y_cond)
+        # assert configs.config_values.y_cond
+        model = MaskedRefineNet(filters=configs.config_values.filters, activation=tf.nn.elu,
+                                splits=dict_splits[configs.config_values.dataset], y_conditioned=configs.config_values.y_cond)
 
-    optimizer = tf.keras.optimizers.Adamax(learning_rate=configs.config_values.learning_rate)
+    optimizer = tf.keras.optimizers.Adamax(
+        learning_rate=configs.config_values.learning_rate)
     step = 0
     evaluate_print_model_summary(model, verbose)
-    
+
     if ocnn:
         from tensorflow.keras import Model
         from tensorflow.keras.layers import Input, Flatten, Dense, AvgPool2D
         # Building OCNN on top
         print("Building OCNN...")
-        Input = [Input(name="images", shape=(28,28,1)),
-                Input(name="idx_sigmas", shape=(), dtype=tf.int32)]
+        Input = [Input(name="images", shape=(28, 28, 1)),
+                 Input(name="idx_sigmas", shape=(), dtype=tf.int32)]
 
         score_logits = model(Input)
         x = Flatten()(score_logits)
@@ -259,8 +270,10 @@ def try_load_model(save_dir, step_ckpt=-1, return_new_model=True, verbose=True, 
             checkpoint = tf.train.latest_checkpoint(
                 str(os.path.abspath(save_dir)))
         else:
-            print("Trying to load checkpoint with step", step_ckpt, " model from " + save_dir)
-            onlyfiles = [f for f in os.listdir(save_dir) if os.path.isfile(os.path.join(save_dir, f))]
+            print("Trying to load checkpoint with step",
+                  step_ckpt, " model from " + save_dir)
+            onlyfiles = [f for f in os.listdir(
+                save_dir) if os.path.isfile(os.path.join(save_dir, f))]
             # r = re.compile(".*step_{}-.*".format(step_ckpt))
             r = re.compile("ckpt-{}\\..*".format(step_ckpt))
 
@@ -284,9 +297,10 @@ def try_load_model(save_dir, step_ckpt=-1, return_new_model=True, verbose=True, 
 
             if ocnn:
                 ckpt = tf.train.Checkpoint(step=step, optimizer=optimizer, model=model,
-                ocnn_model=ocnn_model, ocnn_optimizer=ocnn_optimizer)
+                                           ocnn_model=ocnn_model, ocnn_optimizer=ocnn_optimizer)
             else:
-                 ckpt = tf.train.Checkpoint(step=step, optimizer=optimizer, model=model)
+                ckpt = tf.train.Checkpoint(
+                    step=step, optimizer=optimizer, model=model)
 
             ckpt.restore(checkpoint)
             step = int(step)
@@ -304,11 +318,13 @@ def get_sigma_levels():
                                    configs.config_values.num_L)
     elif configs.config_values.sigma_sequence == 'geometric':
         sigma_levels = tf.math.exp(tf.linspace(tf.math.log(configs.config_values.sigma_high),
-                                               tf.math.log(configs.config_values.sigma_low),
+                                               tf.math.log(
+                                                   configs.config_values.sigma_low),
                                                configs.config_values.num_L))
     elif configs.config_values.sigma_sequence == 'hybrid':
         sigma_levels_geometric = tf.math.exp(tf.linspace(tf.math.log(configs.config_values.sigma_high),
-                                                         tf.math.log(configs.config_values.sigma_low),
+                                                         tf.math.log(
+                                                             configs.config_values.sigma_low),
                                                          configs.config_values.num_L))
         sigma_levels_linear = tf.linspace(configs.config_values.sigma_high,
                                           configs.config_values.sigma_low,
@@ -340,7 +356,8 @@ def get_tensor_images_from_path(path, resize=True):
             is_square = image.shape[0] == image.shape[1]
             if not is_square:
                 min_size = min(image.shape[0], image.shape[1])
-                image = tf.image.resize_with_crop_or_pad(image, min_size, min_size)
+                image = tf.image.resize_with_crop_or_pad(
+                    image, min_size, min_size)
                 size = min_size
                 is_square = True
             if size != 32 and is_square:
@@ -358,29 +375,33 @@ def manage_gpu_memory_usage():
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
             logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+            print(len(gpus), "Physical GPUs,", len(
+                logical_gpus), "Logical GPUs")
         except RuntimeError as e:
             # Memory growth must be set before GPUs have been initialized
             print(e)
+
 
 '''
 Returns an optimal L value according to Technique 2 in NCSNv2 paper
 A range of Cs is also result to help pick a better value
 sigma_high should be largest intra-dataset Euclidean distance
 '''
-def suggest_optimal_L(dim = 32*32, sigma_high = 50.0, sigma_low = 0.01, limit=1000):
-    
+
+
+def suggest_optimal_L(dim=32*32, sigma_high=50.0, sigma_low=0.01, limit=1000):
+
     def calc_C(L):
         gamma = (sigma_low/sigma_high)**(1/(L-1))
         D = np.sqrt(2*dim)
         C = norm.cdf(D*(gamma-1) + 3*gamma) - norm.cdf(D*(gamma-1) - 3*gamma)
         return C
-    
-    L_range = np.arange(2,limit) * 1.0
-    Cs = [calc_C(l) for l in L_range] # C value for every L
-    optimal_L = np.where(np.isclose(Cs,0.9, rtol=1e-3, atol=1e-3))[0][0]
+
+    L_range = np.arange(2, limit) * 1.0
+    Cs = [calc_C(l) for l in L_range]  # C value for every L
+    optimal_L = np.where(np.isclose(Cs, 0.9, rtol=1e-3, atol=1e-3))[0][0]
     optimal_C = Cs[optimal_L]
     plt.plot(L_range, Cs)
     print("Suggested Optimal: L={:d} w/ C={:.3f}".format(optimal_L, optimal_C))
-    
+
     return optimal_L, Cs

@@ -21,11 +21,11 @@ if __name__ == '__main__':
 
     args = utils.get_command_line_args()
     configs.config_values = args
-        
+
     save_dir, complete_model_name = utils.get_savemodel_dir()
-    with open(save_dir +"/params.json", "w") as f:
-        json.dump(vars(args),f)
-    
+    with open(save_dir + "/params.json", "w") as f:
+        json.dump(vars(args), f)
+
     run = EXPERIMENTS[args.experiment]
 
     run()
