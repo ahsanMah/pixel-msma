@@ -6,8 +6,14 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 
+from tensorflow.keras import mixed_precision
+
 import configs
-from model.refinenet import RefineNet, RefineNetTwoResidual
+from model.refinenet import RefineNet
+from model.refinenet import RefineNetTwoResidual
+from model.refinenet import RefineNetLite
+from losses.losses import dsm_loss
+
 # from model.resnet import ResNet
 
 dict_datasets_image_size = {
@@ -20,22 +26,22 @@ dict_datasets_image_size = {
     "masked_pet": (64, 64, 4),
     "blown_fashion": (56, 56, 1),
     "blown_masked_fashion": (56, 56, 2),
-    'masked_fashion': (28, 28, 2),
-    'fashion_mnist': (28, 28, 1),
-    'mnist_ood': (28, 28, 1),
-    'mnist': (28, 28, 1),
-    'cifar10': (32, 32, 3),
+    "masked_fashion": (28, 28, 2),
+    "fashion_mnist": (28, 28, 1),
+    "mnist_ood": (28, 28, 1),
+    "mnist": (28, 28, 1),
+    "cifar10": (32, 32, 3),
     "masked_cifar10": (32, 32, 4),
     "seg_cifar10": (32, 32, 14),
     "multiscale_cifar10": (32, 32, 6),
-    'celeb_a': (32, 32, 3),
+    "celeb_a": (32, 32, 3),
     "svhn_cropped": (32, 32, 3),
 }
 
 dict_train_size = {
     "circles": 100000,
     "svhn_cropped": 73000,
-    'cifar10': 60000,
+    "cifar10": 60000,
     "brain": 10500,
     "masked_brain": 10500,
     "seg_brain": 10500,
@@ -46,10 +52,10 @@ dict_train_size = {
     "masked_pet": 6500,
     "blown_fashion": 60000,
     "blown_masked_fashion": 60000,
-    'masked_fashion': 60000,
-    'fashion_mnist': 60000,
-    'mnist_ood': 60000,
-    'mnist': 60000,
+    "masked_fashion": 60000,
+    "fashion_mnist": 60000,
+    "mnist_ood": 60000,
+    "mnist": 60000,
 }
 
 dict_splits = {
@@ -58,7 +64,7 @@ dict_splits = {
     "seg_brain": (1, 7),
     "masked_cifar10": (3, 1),
     "seg_cifar10": (3, 11),
-    "multiscale_cifar10": (3, 3)
+    "multiscale_cifar10": (3, 3),
 }
 
 with open("./datasets/data_configs.yaml") as f:
@@ -66,20 +72,27 @@ with open("./datasets/data_configs.yaml") as f:
 
 
 def find_k_closest(image, k, data_as_array):
-    l2_distances = tf.reduce_sum(
-        tf.square(data_as_array - image), axis=[1, 2, 3])
+    l2_distances = tf.reduce_sum(tf.square(data_as_array - image), axis=[1, 2, 3])
     _, smallest_idx = tf.math.top_k(-l2_distances, k)
     closest_k = tf.gather(data_as_array, smallest_idx[:k])
     return closest_k, smallest_idx[:k]
 
 
 def get_dataset_image_size(dataset_name):
-    return tuple(int(x.strip()) for x in configs.dataconfig[dataset_name]['shape'].split(','))
+    return tuple(
+        int(x.strip()) for x in configs.dataconfig[dataset_name]["shape"].split(",")
+    )
 
 
 def check_args_validity(args):
-    assert args.model in ["baseline", "resnet",
-                          "refinenet", "refinenet_twores", "masked_refinenet"]
+    assert args.model in [
+        "baseline",
+        "resnet",
+        "refinenet_lite",
+        "refinenet",
+        "refinenet_twores",
+        "masked_refinenet",
+    ]
     if args.max_to_keep == -1:
         args.max_to_keep = None
     args.split = args.split.split(",")
@@ -88,63 +101,160 @@ def check_args_validity(args):
 
 
 def _build_parser():
-    parser = argparse.ArgumentParser(description='CLI Options')
-    parser.add_argument('--experiment', default='train',
-                        help="what experiment to run (default: train)")
-    parser.add_argument('--dataset', default='mnist',
-                        help="tfds name of dataset (default: 'mnist')")
-    parser.add_argument('--model', default='refinenet',
-                        help="Model to use. Can be \'refinenet\', \'resnet\', \'baseline\' (default: refinenet)")
-    parser.add_argument('--filters', default=128, type=int,
-                        help='number of filters in the model. (default: 128)')
-    parser.add_argument('--num_L', default=10, type=int,
-                        help="number of levels of noise to use (default: 10)")
-    parser.add_argument('--sigma_low', default=0.01, type=float,
-                        help="lowest value for noise (default: 0.01)")
-    parser.add_argument('--sigma_high', default=1.0, type=float,
-                        help="highest value for noise (default: 1.0)")
-    parser.add_argument('--sigma_sequence', default="geometric", type=str,
-                        help="can be \'geometric\' or \'linear\' (default: geometric)")
-    parser.add_argument('--steps', default=200000, type=int,
-                        help="number of steps to train the model for (default: 200000)")
-    parser.add_argument('--learning_rate', default=0.0001, type=float,
-                        help="learning rate for the optimizer")
-    parser.add_argument('--batch_size', default=128, type=int,
-                        help="batch size (default: 128)")
-    parser.add_argument('--samples_dir', default='./samples/',
-                        help="folder for saving samples (default: ./samples/)")
+    parser = argparse.ArgumentParser(description="CLI Options")
+    parser.add_argument(
+        "--experiment", default="train", help="what experiment to run (default: train)"
+    )
+    parser.add_argument(
+        "--dataset", default="mnist", help="tfds name of dataset (default: 'mnist')"
+    )
+    parser.add_argument(
+        "--model",
+        default="refinenet",
+        help="Model to use. Can be 'refinenet', 'resnet', 'baseline' (default: refinenet)",
+    )
+    parser.add_argument(
+        "--filters",
+        default=128,
+        type=int,
+        help="number of filters in the model. (default: 128)",
+    )
+    parser.add_argument(
+        "--num_L",
+        default=10,
+        type=int,
+        help="number of levels of noise to use (default: 10)",
+    )
+    parser.add_argument(
+        "--sigma_low",
+        default=0.01,
+        type=float,
+        help="lowest value for noise (default: 0.01)",
+    )
+    parser.add_argument(
+        "--sigma_high",
+        default=1.0,
+        type=float,
+        help="highest value for noise (default: 1.0)",
+    )
+    parser.add_argument(
+        "--sigma_sequence",
+        default="geometric",
+        type=str,
+        help="can be 'geometric' or 'linear' (default: geometric)",
+    )
+    parser.add_argument(
+        "--steps",
+        default=200000,
+        type=int,
+        help="number of steps to train the model for (default: 200000)",
+    )
+    parser.add_argument(
+        "--learning_rate",
+        default=0.0001,
+        type=float,
+        help="learning rate for the optimizer",
+    )
+    parser.add_argument(
+        "--batch_size", default=128, type=int, help="batch size (default: 128)"
+    )
+    parser.add_argument(
+        "--samples_dir",
+        default="./samples/",
+        help="folder for saving samples (default: ./samples/)",
+    )
 
-    parser.add_argument('--checkpoint_dir', default='./saved_models/',
-                        help="folder for saving model checkpoints (default: ./saved_models/)")
-    parser.add_argument('--checkpoint_freq', default=5000, type=int,
-                        help="how often to save a model checkpoint (default: 5000 iterations)")
-    parser.add_argument('--resume', action='store_false',
-                        help="whether to resume from latest checkpoint (default: True)")
-    parser.add_argument('--resume_from', default=-1, type=int,
-                        help='Step of checkpoint where to resume the model from. (default: latest one)')
-    parser.add_argument('--log_freq', default=100, type=int,
-                        help="how often to save a model checkpoint (default: 5000 iterations)")
+    parser.add_argument(
+        "--checkpoint_dir",
+        default="./saved_models/",
+        help="folder for saving model checkpoints (default: ./saved_models/)",
+    )
+    parser.add_argument(
+        "--checkpoint_freq",
+        default=5000,
+        type=int,
+        help="how often to save a model checkpoint (default: 5000 iterations)",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_false",
+        help="whether to resume from latest checkpoint (default: True)",
+    )
+    parser.add_argument(
+        "--resume_from",
+        default=-1,
+        type=int,
+        help="Step of checkpoint where to resume the model from. (default: latest one)",
+    )
+    parser.add_argument(
+        "--log_freq",
+        default=100,
+        type=int,
+        help="how often to save a model checkpoint (default: 5000 iterations)",
+    )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="whether to resume from latest checkpoint (default: False)",
+    )
 
-    parser.add_argument('--init_samples', default="",
-                        help="Folder with images to be used as x0 for sampling with annealed langevin dynamics")
-    parser.add_argument('--k', default=10, type=int,
-                        help='number of nearest neighbours to find from data (default: 10)')
-    parser.add_argument('--eval_setting', default="sample", type=str,
-                        help="can be \'sample\' or \'fid\' (default: sample)")
-    parser.add_argument('--ocnn', action='store_true',
-                        help="whether to attach an ocnn to the model (default: False)")
-    parser.add_argument('--y_cond', action='store_true',
-                        help="whether the model is conditioned on auxiallary y information (default: False)")
-    parser.add_argument('--max_to_keep', default=2, type=int,
-                        help="Number of checkopints to keep saved (default: 2)")
-    parser.add_argument('--split', default='100,0', type=str,
-                        help=r"optional train/validation split percentages e.g. 0.9*train, 0.1*train (default: all train, no val set)")
-    parser.add_argument('--T', default=100, type=int,
-                        help="number of iterations to sample for each sigma (default: 100)")
-    parser.add_argument('--eps', default=2*1e-5, type=int,
-                        help="epsilon for generating samples (default: 2*1e-5)")
-    parser.add_argument('--class_label', default='all', type=str,
-                        help="which class label to use for training, applies to mvtec")
+    parser.add_argument(
+        "--init_samples",
+        default="",
+        help="Folder with images to be used as x0 for sampling with annealed langevin dynamics",
+    )
+    parser.add_argument(
+        "--k",
+        default=10,
+        type=int,
+        help="number of nearest neighbours to find from data (default: 10)",
+    )
+    parser.add_argument(
+        "--eval_setting",
+        default="sample",
+        type=str,
+        help="can be 'sample' or 'fid' (default: sample)",
+    )
+    parser.add_argument(
+        "--ocnn",
+        action="store_true",
+        help="whether to attach an ocnn to the model (default: False)",
+    )
+    parser.add_argument(
+        "--y_cond",
+        action="store_true",
+        help="whether the model is conditioned on auxiallary y information (default: False)",
+    )
+    parser.add_argument(
+        "--max_to_keep",
+        default=2,
+        type=int,
+        help="Number of checkopints to keep saved (default: 2)",
+    )
+    parser.add_argument(
+        "--split",
+        default="100,0",
+        type=str,
+        help=r"optional train/validation split percentages e.g. 0.9*train, 0.1*train (default: all train, no val set)",
+    )
+    parser.add_argument(
+        "--T",
+        default=100,
+        type=int,
+        help="number of iterations to sample for each sigma (default: 100)",
+    )
+    parser.add_argument(
+        "--eps",
+        default=2 * 1e-5,
+        type=int,
+        help="epsilon for generating samples (default: 2*1e-5)",
+    )
+    parser.add_argument(
+        "--class_label",
+        default="all",
+        type=str,
+        help="which class label to use for training, applies to mvtec",
+    )
     return parser
 
 
@@ -157,7 +267,7 @@ def get_command_line_args():
 
     s = "=" * 20 + "\nParameters: \n"
     for key in parser.__dict__:
-        s += key + ': ' + str(parser.__dict__[key]) + "\n"
+        s += key + ": " + str(parser.__dict__[key]) + "\n"
     s += "=" * 20 + "\n"
 
     print(s)
@@ -166,7 +276,7 @@ def get_command_line_args():
 
 
 def get_tensorflow_device():
-    device = 'gpu:0' if tf.test.is_gpu_available() else 'cpu'
+    device = "gpu:0" if tf.test.is_gpu_available() else "cpu"
     print("Using device {}".format(device))
     return device
 
@@ -176,10 +286,15 @@ def get_savemodel_dir():
     model_name = configs.config_values.model
 
     # Folder name: model_name+filters+dataset+L
-    complete_model_name = '{}{}_{}-{}_L{}_SH{:.0e}_SL{:.0e}/'.format(
-        model_name, configs.config_values.filters, configs.config_values.dataset,
-        configs.config_values.class_label, configs.config_values.num_L,
-        configs.config_values.sigma_high, configs.config_values.sigma_low)
+    complete_model_name = "{}{}_{}-{}_L{}_SH{:.0e}_SL{:.0e}/".format(
+        model_name,
+        configs.config_values.filters,
+        configs.config_values.dataset,
+        configs.config_values.class_label,
+        configs.config_values.num_L,
+        configs.config_values.sigma_high,
+        configs.config_values.sigma_low,
+    )
     folder_name = os.path.join(models_dir, complete_model_name)  # + '/'
     os.makedirs(folder_name, exist_ok=True)
 
@@ -188,13 +303,12 @@ def get_savemodel_dir():
 
 def evaluate_print_model_summary(model, verbose=True):
     batch = 1
-    input_shape = (batch,) + \
-        get_dataset_image_size(configs.config_values.dataset)
+    input_shape = (batch,) + get_dataset_image_size(configs.config_values.dataset)
     print(input_shape)
     sigma_levels = get_sigma_levels()  # tf.linspace(0.0,1.0,3) #
     idx_sigmas = tf.ones(batch, dtype=tf.int32)
-#     sigmas = tf.gather(sigma_levels, idx_sigmas)
-#     sigmas = tf.cast(tf.reshape(sigmas, shape=(batch, 1, 1, 1)), dtype=tf.float32)
+    #     sigmas = tf.gather(sigma_levels, idx_sigmas)
+    #     sigmas = tf.cast(tf.reshape(sigmas, shape=(batch, 1, 1, 1)), dtype=tf.float32)
     x = [tf.ones(shape=input_shape), idx_sigmas]
     model(x)
     if verbose:
@@ -205,7 +319,9 @@ def attach_ocnn(top=True, encoding=False):
     pass
 
 
-def try_load_model(save_dir, step_ckpt=-1, return_new_model=True, verbose=True, ocnn=False):
+def try_load_model(
+    save_dir, step_ckpt=-1, return_new_model=True, verbose=True, ocnn=False
+):
     """
     Tries to load a model from the provided directory, otherwise returns a new initialized model.
     :param save_dir: directory with checkpoints
@@ -217,8 +333,9 @@ def try_load_model(save_dir, step_ckpt=-1, return_new_model=True, verbose=True, 
     ocnn_optimizer = None
 
     import tensorflow as tf
+
     tf.compat.v1.enable_v2_behavior()
-    if configs.config_values.model == 'baseline':
+    if configs.config_values.model == "baseline":
         configs.config_values.num_L = 1
 
     splits = False
@@ -227,33 +344,50 @@ def try_load_model(save_dir, step_ckpt=-1, return_new_model=True, verbose=True, 
 
     # initialize return values
     model_name = configs.config_values.model
-    if model_name == 'resnet':
-        model = ResNet(filters=configs.config_values.filters,
-                       activation=tf.nn.elu)
-    elif model_name in ['refinenet', 'baseline']:
-        model = RefineNet(filters=configs.config_values.filters, activation=tf.nn.elu,
-                          y_conditioned=configs.config_values.y_cond, splits=splits)
-    elif model_name == 'refinenet_twores':
+    if model_name == "resnet":
+        model = ResNet(filters=configs.config_values.filters, activation=tf.nn.elu)
+    elif model_name in ["refinenet", "baseline"]:
+        model = RefineNet(
+            filters=configs.config_values.filters,
+            activation=tf.nn.elu,
+            y_conditioned=configs.config_values.y_cond,
+            splits=splits,
+        )
+    elif model_name == "refinenet_lite":
+        model = RefineNetLite(
+            filters=configs.config_values.filters, activation=tf.nn.elu
+        )
+    elif model_name == "refinenet_twores":
         model = RefineNetTwoResidual(
-            filters=configs.config_values.filters, activation=tf.nn.elu)
-    elif model_name == 'masked_refinenet':
+            filters=configs.config_values.filters, activation=tf.nn.elu
+        )
+    elif model_name == "masked_refinenet":
         print("Using Masked RefineNet...")
         # assert configs.config_values.y_cond
-        model = MaskedRefineNet(filters=configs.config_values.filters, activation=tf.nn.elu,
-                                splits=dict_splits[configs.config_values.dataset], y_conditioned=configs.config_values.y_cond)
+        model = MaskedRefineNet(
+            filters=configs.config_values.filters,
+            activation=tf.nn.elu,
+            splits=dict_splits[configs.config_values.dataset],
+            y_conditioned=configs.config_values.y_cond,
+        )
 
     optimizer = tf.keras.optimizers.Adamax(
-        learning_rate=configs.config_values.learning_rate)
+        learning_rate=configs.config_values.learning_rate
+    )
     step = 0
+
     evaluate_print_model_summary(model, verbose)
 
     if ocnn:
         from tensorflow.keras import Model
         from tensorflow.keras.layers import Input, Flatten, Dense, AvgPool2D
+
         # Building OCNN on top
         print("Building OCNN...")
-        Input = [Input(name="images", shape=(28, 28, 1)),
-                 Input(name="idx_sigmas", shape=(), dtype=tf.int32)]
+        Input = [
+            Input(name="images", shape=(28, 28, 1)),
+            Input(name="idx_sigmas", shape=(), dtype=tf.int32),
+        ]
 
         score_logits = model(Input)
         x = Flatten()(score_logits)
@@ -267,13 +401,18 @@ def try_load_model(save_dir, step_ckpt=-1, return_new_model=True, verbose=True, 
     if configs.config_values.resume:
         if step_ckpt == -1:
             print("Trying to load latest model from " + save_dir)
-            checkpoint = tf.train.latest_checkpoint(
-                str(os.path.abspath(save_dir)))
+            checkpoint = tf.train.latest_checkpoint(str(os.path.abspath(save_dir)))
         else:
-            print("Trying to load checkpoint with step",
-                  step_ckpt, " model from " + save_dir)
-            onlyfiles = [f for f in os.listdir(
-                save_dir) if os.path.isfile(os.path.join(save_dir, f))]
+            print(
+                "Trying to load checkpoint with step",
+                step_ckpt,
+                " model from " + save_dir,
+            )
+            onlyfiles = [
+                f
+                for f in os.listdir(save_dir)
+                if os.path.isfile(os.path.join(save_dir, f))
+            ]
             # r = re.compile(".*step_{}-.*".format(step_ckpt))
             r = re.compile("ckpt-{}\\..*".format(step_ckpt))
 
@@ -296,11 +435,15 @@ def try_load_model(save_dir, step_ckpt=-1, return_new_model=True, verbose=True, 
             step = tf.Variable(0)
 
             if ocnn:
-                ckpt = tf.train.Checkpoint(step=step, optimizer=optimizer, model=model,
-                                           ocnn_model=ocnn_model, ocnn_optimizer=ocnn_optimizer)
-            else:
                 ckpt = tf.train.Checkpoint(
-                    step=step, optimizer=optimizer, model=model)
+                    step=step,
+                    optimizer=optimizer,
+                    model=model,
+                    ocnn_model=ocnn_model,
+                    ocnn_optimizer=ocnn_optimizer,
+                )
+            else:
+                ckpt = tf.train.Checkpoint(step=step, optimizer=optimizer, model=model)
 
             ckpt.restore(checkpoint)
             step = int(step)
@@ -310,25 +453,35 @@ def try_load_model(save_dir, step_ckpt=-1, return_new_model=True, verbose=True, 
 
 
 def get_sigma_levels():
-    if configs.config_values.model == 'baseline':
+    if configs.config_values.model == "baseline":
         sigma_levels = tf.ones(1) * configs.config_values.sigma_low
-    elif configs.config_values.sigma_sequence == 'linear':
-        sigma_levels = tf.linspace(configs.config_values.sigma_high,
-                                   configs.config_values.sigma_low,
-                                   configs.config_values.num_L)
-    elif configs.config_values.sigma_sequence == 'geometric':
-        sigma_levels = tf.math.exp(tf.linspace(tf.math.log(configs.config_values.sigma_high),
-                                               tf.math.log(
-                                                   configs.config_values.sigma_low),
-                                               configs.config_values.num_L))
-    elif configs.config_values.sigma_sequence == 'hybrid':
-        sigma_levels_geometric = tf.math.exp(tf.linspace(tf.math.log(configs.config_values.sigma_high),
-                                                         tf.math.log(
-                                                             configs.config_values.sigma_low),
-                                                         configs.config_values.num_L))
-        sigma_levels_linear = tf.linspace(configs.config_values.sigma_high,
-                                          configs.config_values.sigma_low,
-                                          configs.config_values.num_L)
+    elif configs.config_values.sigma_sequence == "linear":
+        sigma_levels = tf.linspace(
+            configs.config_values.sigma_high,
+            configs.config_values.sigma_low,
+            configs.config_values.num_L,
+        )
+    elif configs.config_values.sigma_sequence == "geometric":
+        sigma_levels = tf.math.exp(
+            tf.linspace(
+                tf.math.log(configs.config_values.sigma_high),
+                tf.math.log(configs.config_values.sigma_low),
+                configs.config_values.num_L,
+            )
+        )
+    elif configs.config_values.sigma_sequence == "hybrid":
+        sigma_levels_geometric = tf.math.exp(
+            tf.linspace(
+                tf.math.log(configs.config_values.sigma_high),
+                tf.math.log(configs.config_values.sigma_low),
+                configs.config_values.num_L,
+            )
+        )
+        sigma_levels_linear = tf.linspace(
+            configs.config_values.sigma_high,
+            configs.config_values.sigma_low,
+            configs.config_values.num_L,
+        )
         sigma_levels = (sigma_levels_geometric + sigma_levels_linear) / 2
     return sigma_levels
 
@@ -350,14 +503,13 @@ def get_init_samples():
 def get_tensor_images_from_path(path, resize=True):
     images = []
     for i, filename in enumerate(os.listdir(path)):
-        image = tf.io.decode_image(tf.io.read_file(path + '/' + filename))
+        image = tf.io.decode_image(tf.io.read_file(path + "/" + filename))
         if resize:
             size = max(image.shape[0], image.shape[1])
             is_square = image.shape[0] == image.shape[1]
             if not is_square:
                 min_size = min(image.shape[0], image.shape[1])
-                image = tf.image.resize_with_crop_or_pad(
-                    image, min_size, min_size)
+                image = tf.image.resize_with_crop_or_pad(image, min_size, min_size)
                 size = min_size
                 is_square = True
             if size != 32 and is_square:
@@ -368,33 +520,33 @@ def get_tensor_images_from_path(path, resize=True):
 
 
 def manage_gpu_memory_usage():
-    gpus = tf.config.experimental.list_physical_devices('GPU')
+    gpus = tf.config.experimental.list_physical_devices("GPU")
     if gpus:
         try:
             # Currently, memory growth needs to be the same across GPUs
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
-            logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-            print(len(gpus), "Physical GPUs,", len(
-                logical_gpus), "Logical GPUs")
+            logical_gpus = tf.config.experimental.list_logical_devices("GPU")
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
         except RuntimeError as e:
             # Memory growth must be set before GPUs have been initialized
             print(e)
 
 
-'''
+"""
 Returns an optimal L value according to Technique 2 in NCSNv2 paper
 A range of Cs is also result to help pick a better value
 sigma_high should be largest intra-dataset Euclidean distance
-'''
+"""
 
 
-def suggest_optimal_L(dim=32*32, sigma_high=50.0, sigma_low=0.01, limit=1000):
-
+def suggest_optimal_L(dim=32 * 32, sigma_high=50.0, sigma_low=0.01, limit=1000):
     def calc_C(L):
-        gamma = (sigma_low/sigma_high)**(1/(L-1))
-        D = np.sqrt(2*dim)
-        C = norm.cdf(D*(gamma-1) + 3*gamma) - norm.cdf(D*(gamma-1) - 3*gamma)
+        gamma = (sigma_low / sigma_high) ** (1 / (L - 1))
+        D = np.sqrt(2 * dim)
+        C = norm.cdf(D * (gamma - 1) + 3 * gamma) - norm.cdf(
+            D * (gamma - 1) - 3 * gamma
+        )
         return C
 
     L_range = np.arange(2, limit) * 1.0
@@ -405,3 +557,113 @@ def suggest_optimal_L(dim=32*32, sigma_high=50.0, sigma_low=0.01, limit=1000):
     print("Suggested Optimal: L={:d} w/ C={:.3f}".format(optimal_L, optimal_C))
 
     return optimal_L, Cs
+
+
+def build_distributed_trainers(
+    strategy, model, optimizer, ema, sigma_levels, num_replicas, loss_aggregators
+):
+
+    num_L = sigma_levels.shape[0]
+    train_loss, test_loss = loss_aggregators
+
+    @tf.function
+    def train_fn(x_batch):
+        @tf.function(experimental_compile=True)
+        def dsm_loss(score, x_perturbed, x, sigmas):
+            target = (x_perturbed - x) / (tf.square(sigmas))
+            loss = (
+                0.5
+                * tf.reduce_sum(
+                    tf.square(score + target), axis=[1, 2, 3], keepdims=True
+                )
+                * tf.square(sigmas)
+            )
+            # Note: We changed reduce_mean to account for multiple GPUs
+            # Necessary when mirrored strategy is used
+            loss = tf.reduce_mean(loss) / num_replicas
+            return loss
+
+        def step_fn(x_batch):
+
+            idx_sigmas = tf.random.uniform(
+                [x_batch.shape[0]], minval=0, maxval=num_L, dtype=tf.dtypes.int32
+            )
+            sigmas = tf.gather(sigma_levels, idx_sigmas)
+            sigmas = tf.reshape(sigmas, shape=(x_batch.shape[0], 1, 1, 1))
+            x_batch_perturbed = x_batch + tf.random.normal(shape=x_batch.shape) * sigmas
+
+            with tf.GradientTape() as t:
+                scores = model([x_batch_perturbed, idx_sigmas])
+                current_loss = dsm_loss(scores, x_batch_perturbed, x_batch, sigmas)
+
+                if mixed_precision.global_policy().name == "mixed_float16":
+                    scaled_loss = optimizer.get_scaled_loss(current_loss)
+
+            if mixed_precision.global_policy().name == "mixed_float16":
+                gradients = t.gradient(scaled_loss, model.trainable_variables)
+                gradients = optimizer.get_unscaled_gradients(gradients)
+            else:
+                gradients = t.gradient(current_loss, model.trainable_variables)
+
+            opt_op = optimizer.apply_gradients(
+                zip(gradients, model.trainable_variables)
+            )
+
+            with tf.control_dependencies([opt_op]):
+                # Creates the shadow variables, and add ops to maintain moving averages
+                # Also creates an op that will update the moving
+                # averages after each training step
+                training_op = ema.apply(model.trainable_variables)
+
+            return current_loss
+
+        per_replica_losses = strategy.run(step_fn, args=(x_batch,))
+        mean_loss = strategy.reduce(
+            tf.distribute.ReduceOp.SUM, per_replica_losses, axis=None
+        )
+        train_loss(mean_loss)
+
+        return mean_loss
+
+    @tf.function
+    def test_fn(x_batch, idx):
+        def dsm_loss(score, x_perturbed, x, sigmas):
+            target = (x_perturbed - x) / (tf.square(sigmas))
+            loss = (
+                0.5
+                * tf.reduce_sum(
+                    tf.square(score + target), axis=[1, 2, 3, 4], keepdims=True
+                )
+                * tf.square(sigmas)
+            )
+            # Note: We changed reduce_mean to account for multiple GPUs
+            # Necessary when mirrored strategy is used
+            loss = tf.reduce_mean(loss) / num_replicas
+            return loss
+
+        def step_fn(x_batch, idx):
+            idx_sigmas = idx * tf.ones([x_batch.shape[0]], dtype=tf.dtypes.int32)
+            sigmas = tf.gather(sigma_levels, idx_sigmas)
+            sigmas = tf.reshape(sigmas, shape=(x_batch.shape[0], 1, 1, 1, 1))
+
+            x_batch_perturbed = x_batch + tf.random.normal(shape=x_batch.shape) * sigmas
+
+            scores = model([x_batch_perturbed, sigma_input])
+            loss = dsm_loss(scores, x_batch_perturbed, x_batch, sigmas)
+            return loss
+
+        per_replica_losses = strategy.run(
+            step_fn,
+            args=(
+                x_batch,
+                idx,
+            ),
+        )
+        mean_loss = strategy.reduce(
+            tf.distribute.ReduceOp.SUM, per_replica_losses, axis=None
+        )
+        test_loss(mean_loss)
+
+        return mean_loss
+
+    return train_fn, test_fn
