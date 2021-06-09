@@ -566,23 +566,21 @@ def build_distributed_trainers(
     num_L = sigma_levels.shape[0]
     train_loss, test_loss = loss_aggregators
 
+    @tf.function(experimental_compile=True)
+    def dsm_loss(score, x_perturbed, x, sigmas):
+        target = (x_perturbed - x) / (tf.square(sigmas))
+        loss = (
+            0.5
+            * tf.reduce_sum(tf.square(score + target), axis=[1, 2, 3], keepdims=True)
+            * tf.square(sigmas)
+        )
+        # Note: We changed reduce_mean to account for multiple GPUs
+        # Necessary when mirrored strategy is used
+        loss = tf.reduce_mean(loss) / num_replicas
+        return loss
+
     @tf.function
     def train_fn(x_batch):
-        @tf.function(experimental_compile=True)
-        def dsm_loss(score, x_perturbed, x, sigmas):
-            target = (x_perturbed - x) / (tf.square(sigmas))
-            loss = (
-                0.5
-                * tf.reduce_sum(
-                    tf.square(score + target), axis=[1, 2, 3], keepdims=True
-                )
-                * tf.square(sigmas)
-            )
-            # Note: We changed reduce_mean to account for multiple GPUs
-            # Necessary when mirrored strategy is used
-            loss = tf.reduce_mean(loss) / num_replicas
-            return loss
-
         def step_fn(x_batch):
 
             idx_sigmas = tf.random.uniform(
@@ -627,28 +625,14 @@ def build_distributed_trainers(
 
     @tf.function
     def test_fn(x_batch, idx):
-        def dsm_loss(score, x_perturbed, x, sigmas):
-            target = (x_perturbed - x) / (tf.square(sigmas))
-            loss = (
-                0.5
-                * tf.reduce_sum(
-                    tf.square(score + target), axis=[1, 2, 3, 4], keepdims=True
-                )
-                * tf.square(sigmas)
-            )
-            # Note: We changed reduce_mean to account for multiple GPUs
-            # Necessary when mirrored strategy is used
-            loss = tf.reduce_mean(loss) / num_replicas
-            return loss
-
         def step_fn(x_batch, idx):
             idx_sigmas = idx * tf.ones([x_batch.shape[0]], dtype=tf.dtypes.int32)
             sigmas = tf.gather(sigma_levels, idx_sigmas)
-            sigmas = tf.reshape(sigmas, shape=(x_batch.shape[0], 1, 1, 1, 1))
+            sigmas = tf.reshape(sigmas, shape=(x_batch.shape[0], 1, 1, 1))
 
             x_batch_perturbed = x_batch + tf.random.normal(shape=x_batch.shape) * sigmas
 
-            scores = model([x_batch_perturbed, sigma_input])
+            scores = model([x_batch_perturbed, idx_sigmas])
             loss = dsm_loss(scores, x_batch_perturbed, x_batch, sigmas)
             return loss
 
