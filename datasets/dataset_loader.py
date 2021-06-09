@@ -123,9 +123,13 @@ def load_data(dataset_name):
 
 
 def load_knee_data():
+    _key = "datadir"
+    if configs.config_values.longleaf:
+        _key += "_longleaf"
 
-    train_dataset = FastKnee("/home/PO3D/raw_data/knee/singlecoil_train")
-    val_dataset = FastKnee("/home/PO3D/raw_data/knee/singlecoil_val")
+    datadir = configs.dataconfig["knee"][_key]
+    train_dataset = FastKnee(os.path.join(datadir, "singlecoil_train"))
+    val_dataset = FastKnee(os.path.join(datadir, "singlecoil_val"))
 
     def tf_gen_train():
         for k, x in train_dataset:
