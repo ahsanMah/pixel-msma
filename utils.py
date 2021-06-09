@@ -255,6 +255,13 @@ def _build_parser():
         type=str,
         help="which class label to use for training, applies to mvtec",
     )
+
+    parser.add_argument(
+        "--longleaf",
+        action="store_true",
+        help="whether model is running on longleaf server (default: False)",
+    )
+
     return parser
 
 
