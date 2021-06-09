@@ -29,7 +29,7 @@ class FastKnee(Dataset):
         for fname in list(pathlib.Path(root).iterdir()):
             files.append(fname)
 
-        for volume_i, fname in enumerate(sorted(files[:10])):
+        for volume_i, fname in enumerate(sorted(files)):
             data = h5py.File(fname, "r")
             kspace = data["kspace"]
             num_slices = kspace.shape[0]

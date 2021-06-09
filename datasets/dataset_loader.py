@@ -124,7 +124,7 @@ def load_data(dataset_name):
 
 def load_knee_data():
 
-    train_dataset = FastKnee("/home/PO3D/raw_data/knee/singlecoil_val")
+    train_dataset = FastKnee("/home/PO3D/raw_data/knee/singlecoil_train")
     val_dataset = FastKnee("/home/PO3D/raw_data/knee/singlecoil_val")
 
     def tf_gen_train():
@@ -328,10 +328,10 @@ def mvtec_aug(x):
 
 @tf.function
 def knee_preproc(x):
-    # shape = configs.dataconfig[configs.config_values.dataset]["downsample"]
-    # img_sz = int(shape.split(",")[0].strip())
-    # x = tf.image.resize(x, (img_sz, img_sz))
-    # print("Resized:", x.shape, img_sz)
+    shape = configs.dataconfig[configs.config_values.dataset]["downsample"]
+    img_sz = int(shape.split(",")[0].strip())
+    x = tf.image.resize(x, (img_sz, img_sz))
+    print("Resized:", x.shape, img_sz)
     return x
 
 

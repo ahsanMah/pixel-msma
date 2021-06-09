@@ -20,4 +20,4 @@ mvtec_lowres:
 knee:
   shape: 128, 128, 1
   downsample: 64, 64, 1
-  n_samples: 10000
+  n_samples: 16690
