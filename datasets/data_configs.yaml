@@ -1,3 +1,8 @@
+mnist:
+  shape: 28, 28, 1
+  batch_size: 32
+  n_samples: 60000
+
 mvtec:
   datadir: "/DATA/Users/amahmood/GDrive/MVTec_AD/"
   datadir_gdrive: "/content/drive/MyDrive/ML_Datasets/MvTec_AD/"
@@ -11,3 +16,8 @@ mvtec_lowres:
   downsample: 96, 96, 3
   shape: 64, 64, 3
   batch_size: 32
+
+knee:
+  shape: 128, 128, 1
+  downsample: 64, 64, 1
+  n_samples: 10000
