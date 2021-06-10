@@ -23,3 +23,9 @@ knee:
   shape: 128, 128, 1
   downsample: 64, 64, 1
   n_samples: 16690
+
+knee_highres:
+  datadir: "/home/PO3D/raw_data/knee/"
+  datadir_longleaf: "/nas/longleaf/home/amahmood/mypine/DATA/knee"
+  shape: 128, 128, 1
+  n_samples: 16690

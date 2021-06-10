@@ -339,6 +339,11 @@ def knee_preproc(x):
     return x
 
 
+@tf.function
+def knee_preproc_hres(x):
+    return x
+
+
 # TODO: Confirm these with Martin
 @tf.function
 def knee_aug(x):
@@ -351,6 +356,7 @@ def knee_aug(x):
 
 
 preproc_map = {
+    "knee_highres": knee_preproc_hres,
     "knee": knee_preproc,
     "mvtec": mvtec_preproc,
     "mvtec_lowres": mvtec_preproc,
