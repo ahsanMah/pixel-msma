@@ -16,8 +16,8 @@ import pickle
 import copy
 import argparse
 
-from torch.fft import fft
-from torch.fft import ifft
+from torch.fft import fft2 as fft
+from torch.fft import ifft2 as ifft
 
 
 class FastKnee(Dataset):
@@ -48,7 +48,8 @@ class FastKnee(Dataset):
             kspace = torch.from_numpy(np.stack([kspace.real, kspace.imag], axis=-1))
             #             print("Kspace Tensor:", kspace.shape)
             kspace = ifftshift(kspace, dim=(0, 1))
-            target = ifft(kspace, 2)
+            # target = ifft(kspace, 2)
+            target = ifft(kspace, dim=(0, 1))
             target = ifftshift(target, dim=(0, 1))
 
             # center crop and resize
@@ -58,7 +59,10 @@ class FastKnee(Dataset):
             target = target.permute(1, 2, 0)
             kspace = fftshift(target, dim=(0, 1))
             #             print("After shift", kspace.shape)
-            kspace = fft(kspace, 2)
+            # kspace = fft(kspace, 2)
+            kspace = fft(kspace, dim=(0, 1))
+            # FIXME: Adding this made kspace images look better...
+            # kspace = fftshift(kspace, dim=(0, 1))
 
             # Normalize using mean of k-space in training data
             target /= 7.072103529760345e-07
@@ -89,7 +93,7 @@ class FastKneeTumor(FastKnee):
             kspace = data["kspace"][slice_id]
             kspace = torch.from_numpy(np.stack([kspace.real, kspace.imag], axis=-1))
             kspace = ifftshift(kspace, dim=(0, 1))
-            target = ifft(kspace, 2, normalized=False)
+            target = ifft(kspace, 2)
             target = ifftshift(target, dim=(0, 1))
             # transform
             target = target.permute(2, 0, 1)
