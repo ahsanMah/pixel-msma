@@ -33,8 +33,14 @@ from monai.transforms.spatial.array import *
 from typing import *
 from monai.transforms import *
 
+
+def complex_magnitude(x):
+    return (x.real ** 2 + x.imag ** 2) ** 0.5
+
+
 def to_magnitude(tensor, dim):
     return (tensor ** 2).sum(dim=dim) ** 0.5
+
 
 def roll_one_dim(x, shift, dim):
     shift = shift % x.size(dim)
@@ -46,6 +52,7 @@ def roll_one_dim(x, shift, dim):
 
     return torch.cat((right, left), dim=dim)
 
+
 def roll(x, shift, dim):
     if len(shift) != len(dim):
         raise ValueError("len(shift) must match len(dim)")
@@ -54,6 +61,7 @@ def roll(x, shift, dim):
         x = roll_one_dim(x, s, d)
 
     return x
+
 
 def fftshift(x, dim):
     if dim is None:
@@ -69,6 +77,7 @@ def fftshift(x, dim):
 
     return roll(x, shift, dim)
 
+
 def ifftshift(x, dim):
     if dim is None:
         # this weird code is necessary for toch.jit.script typing
@@ -83,6 +92,7 @@ def ifftshift(x, dim):
 
     return roll(x, shift, dim)
 
+
 def center_crop(img, output_size):
     _, image_height, image_width = img.shape
     crop_height, crop_width = output_size
@@ -92,11 +102,13 @@ def center_crop(img, output_size):
     bottom = top + crop_height
     return img[..., top:bottom, left:right]
 
+
 def resize(img, output_size):
     img = img.unsqueeze(0)
     img = interpolate(img, output_size, mode="bilinear", align_corners=False)
     img = img.squeeze(0)
     return img
+
 
 class TumorGrowthGrid(RandDeformGrid):
     def __init__(
@@ -107,14 +119,16 @@ class TumorGrowthGrid(RandDeformGrid):
         as_tensor_output: bool = True,
         device: Optional[torch.device] = None,
     ) -> None:
-        super(TumorGrowthGrid, self).__init__(spacing, magnitude_range, as_tensor_output, device)
+        super(TumorGrowthGrid, self).__init__(
+            spacing, magnitude_range, as_tensor_output, device
+        )
         self.max_tumor_size = max_tumor_size
 
     def randomize(self) -> None:
         h1, w1 = self.R.randint(-self.max_tumor_size, self.max_tumor_size, size=2)
         h2, w2 = self.R.randint(-self.max_tumor_size, self.max_tumor_size, size=2)
-        self.center1 = np.array([h1,w1,1], dtype=np.float32).reshape(3,1,1)
-        self.center2 = np.array([h2,w2,1], dtype=np.float32).reshape(3,1,1)
+        self.center1 = np.array([h1, w1, 1], dtype=np.float32).reshape(3, 1, 1)
+        self.center2 = np.array([h2, w2, 1], dtype=np.float32).reshape(3, 1, 1)
         self.rand_mag = self.R.uniform(self.magnitude[0], self.magnitude[1])
 
     def __call__(self, spatial_size: Sequence[int]) -> Union[np.ndarray, torch.Tensor]:
@@ -125,15 +139,22 @@ class TumorGrowthGrid(RandDeformGrid):
         self.spacing = fall_back_tuple(self.spacing, (1.0,) * len(spatial_size))
         control_grid = create_control_grid(spatial_size, self.spacing)
         self.randomize()
-        dist1 = np.sqrt(np.sum(np.square(control_grid - self.center1)[:2], axis=0) + 1e-6)
-        dist2 = np.sqrt(np.sum(np.square(control_grid - self.center2)[:2], axis=0) + 1e-6)
+        dist1 = np.sqrt(
+            np.sum(np.square(control_grid - self.center1)[:2], axis=0) + 1e-6
+        )
+        dist2 = np.sqrt(
+            np.sum(np.square(control_grid - self.center2)[:2], axis=0) + 1e-6
+        )
         deform_mag = self.rand_mag / (dist1 + dist2)
-        center = (self.center1 + self.center2) / 2.
+        center = (self.center1 + self.center2) / 2.0
         deform = (control_grid - center)[:2] * deform_mag
-        control_grid[:len(spatial_size)] -= deform
+        control_grid[: len(spatial_size)] -= deform
         if self.as_tensor_output:
-            control_grid = torch.as_tensor(np.ascontiguousarray(control_grid), device=self.device)
+            control_grid = torch.as_tensor(
+                np.ascontiguousarray(control_grid), device=self.device
+            )
         return control_grid
+
 
 class RandTumor(Randomizable, Transform):
     def __init__(
@@ -149,8 +170,11 @@ class RandTumor(Randomizable, Transform):
         device: Optional[torch.device] = None,
     ) -> None:
         self.deform_grid = TumorGrowthGrid(
-            spacing=spacing, max_tumor_size=max_tumor_size, magnitude_range=magnitude_range, 
-            as_tensor_output=True, device=device
+            spacing=spacing,
+            max_tumor_size=max_tumor_size,
+            magnitude_range=magnitude_range,
+            as_tensor_output=True,
+            device=device,
         )
         self.resampler = Resample(as_tensor_output=as_tensor_output, device=device)
 
@@ -191,4 +215,9 @@ class RandTumor(Randomizable, Transform):
             grid = CenterSpatialCrop(roi_size=sp_size)(grid[0])
         else:
             grid = create_grid(spatial_size=sp_size)
-        return self.resampler(img, grid, mode=mode or self.mode, padding_mode=padding_mode or self.padding_mode)
+        return self.resampler(
+            img,
+            grid,
+            mode=mode or self.mode,
+            padding_mode=padding_mode or self.padding_mode,
+        )

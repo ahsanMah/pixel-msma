@@ -18,6 +18,7 @@ import argparse
 
 from torch.fft import fft2 as fft
 from torch.fft import ifft2 as ifft
+from torch.fft import fftshift, ifftshift
 
 
 class FastKnee(Dataset):
@@ -46,30 +47,43 @@ class FastKnee(Dataset):
         with h5py.File(fname, "r") as data:
             kspace = data["kspace"][slice_id]
             kspace = torch.from_numpy(np.stack([kspace.real, kspace.imag], axis=-1))
-            #             print("Kspace Tensor:", kspace.shape)
+
+            # For 1.8+
+            # pytorch now offers a complex64 data type
+            kspace = torch.view_as_complex(kspace)
             kspace = ifftshift(kspace, dim=(0, 1))
-            # target = ifft(kspace, 2)
-            target = ifft(kspace, dim=(0, 1))
+            # norm=forward means no normalization
+            target = ifft(kspace, dim=(0, 1), norm="forward")
             target = ifftshift(target, dim=(0, 1))
 
+            # Plot images to confirm fft worked
+            # t_img = complex_magnitude(target)
+            # print(t_img.dtype, t_img.shape)
+            # plt.imshow(t_img)
+            # plt.show()
+            # plt.imshow(target.real)
+            # plt.show()
+
             # center crop and resize
-            target = target.permute(2, 0, 1)
+            target = torch.unsqueeze(target, dim=0)
             target = center_crop(target, (128, 128))
-            # target = resize(target, (128,128))
-            target = target.permute(1, 2, 0)
+            target = torch.squeeze(target)
+
+            # Get kspace of cropped image
             kspace = fftshift(target, dim=(0, 1))
-            #             print("After shift", kspace.shape)
-            # kspace = fft(kspace, 2)
             kspace = fft(kspace, dim=(0, 1))
-            # FIXME: Adding this made kspace images look better...
-            # kspace = fftshift(kspace, dim=(0, 1))
+            # Realign kspace to keep high freq signal in center
+            # Note that original fastmri code did not do this...
+            kspace = fftshift(kspace, dim=(0, 1))
 
             # Normalize using mean of k-space in training data
             target /= 7.072103529760345e-07
             kspace /= 7.072103529760345e-07
+
+            # TODO: Should I convert to image tensors here..?
             # to pytorch format
-            kspace = kspace.permute(2, 0, 1)
-            target = target.permute(2, 0, 1)
+            # kspace = kspace.permute(2, 0, 1)
+            # target = target.permute(2, 0, 1)
 
         return kspace, target
 
@@ -92,26 +106,31 @@ class FastKneeTumor(FastKnee):
         with h5py.File(fname, "r") as data:
             kspace = data["kspace"][slice_id]
             kspace = torch.from_numpy(np.stack([kspace.real, kspace.imag], axis=-1))
+            kspace = torch.view_as_complex(kspace)
             kspace = ifftshift(kspace, dim=(0, 1))
-            target = ifft(kspace, 2)
+            target = ifft(kspace, dim=(0, 1), norm="forward")
             target = ifftshift(target, dim=(0, 1))
+
             # transform
-            target = target.permute(2, 0, 1)
+            target = torch.stack([target.real, target.imag])
             target = self.deform(target)
             target = torch.from_numpy(target)
+
             # center crop and resize
             target = center_crop(target, (128, 128))
             # target = resize(target, (128,128))
-            target = target.permute(1, 2, 0)
+
+            # Making contiguous is necessary for complex view
+            target = target.permute(1, 2, 0).contiguous()
+            target = torch.view_as_complex(target)
+
             kspace = fftshift(target, dim=(0, 1))
-            #             kspace = torch.fft(kspace, 2, normalized=False)
-            kspace = fft(kspace, 2)
+            kspace = fft(kspace, dim=(0, 1))
+            kspace = fftshift(kspace, dim=(0, 1))
+
             # Normalize using mean of k-space in training data
             target /= 7.072103529760345e-07
             kspace /= 7.072103529760345e-07
-            # to pytorch format
-            kspace = kspace.permute(2, 0, 1)
-            target = target.permute(2, 0, 1)
 
         return kspace, target
 

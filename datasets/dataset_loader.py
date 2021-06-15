@@ -11,7 +11,7 @@ import utils
 import yaml
 import pathlib
 
-from .mri_utils import to_magnitude
+from .mri_utils import complex_magnitude
 from .fastmri import FastKnee, FastKneeTumor
 
 # AUTOTUNE = tf.data.experimental.AUTOTUNE
@@ -45,11 +45,11 @@ BRAIN_LABELS = [
 #     dataconfig = yaml.full_load(f)
 
 
-def load_data(dataset_name):
+def load_data(dataset_name, include_ood=False):
     # load data from tfds
 
     if "knee" in dataset_name:
-        return load_knee_data()
+        return load_knee_data(include_ood)
 
     if "mvtec" in dataset_name:
         base_path = configs.dataconfig[dataset_name]["datadir"]
@@ -122,7 +122,7 @@ def load_data(dataset_name):
     return train, test
 
 
-def load_knee_data():
+def load_knee_data(include_ood=False):
     _key = "datadir"
     if configs.config_values.longleaf:
         _key += "_longleaf"
@@ -131,26 +131,38 @@ def load_knee_data():
     train_dataset = FastKnee(os.path.join(datadir, "singlecoil_train"))
     val_dataset = FastKnee(os.path.join(datadir, "singlecoil_val"))
 
-    def tf_gen_train():
-        for k, x in train_dataset:
-            img = to_magnitude(x, dim=0)
-            img = img.numpy()[..., np.newaxis]
-            yield img
+    def make_generator(ds):
+        def tf_gen():
+            for k, x in ds:
+                img = complex_magnitude(x)
+                img = img.numpy()[..., np.newaxis]
+                yield img
 
-    def tf_gen_val():
-        for k, x in val_dataset:
-            img = to_magnitude(x, dim=0)
-            img = img.numpy()[..., np.newaxis]
-            yield img
+        return tf_gen
+
+    # def tf_gen_val():
+    #     for k, x in val_dataset:
+    #         img = to_magnitude(x, dim=0)
+    #         img = img.numpy()[..., np.newaxis]
+    #         yield img
 
     train_ds = tf.data.Dataset.from_generator(
-        tf_gen_train,
+        make_generator(train_dataset),
         output_signature=(tf.TensorSpec(shape=(128, 128, 1), dtype=tf.float32)),
     )
     val_ds = tf.data.Dataset.from_generator(
-        tf_gen_val,
+        make_generator(val_dataset),
         output_signature=(tf.TensorSpec(shape=(128, 128, 1), dtype=tf.float32)),
     )
+
+    if include_ood:
+        test_dataset = FastKneeTumor(os.path.join(datadir, "singlecoil_test_v2"))
+        test_ds = tf.data.Dataset.from_generator(
+            make_generator(test_dataset),
+            output_signature=(tf.TensorSpec(shape=(128, 128, 1), dtype=tf.float32)),
+        )
+
+        return train_ds, val_ds, test_ds
 
     return train_ds, val_ds
 
