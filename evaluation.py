@@ -1,33 +1,53 @@
-"""
-TODO: This file should contain an evaluation script
-"""
-# import csv
-# import os
-# import shutil
+import os
 
-# import tensorflow as tf
+import numpy as np
+import tensorflow as tf
 
-# import configs
-# import fid
-# import utils
-# from generating.generate import sample_many_and_save
-# from model.inception import Metrics
-
-# stat_files = {
-#     "multiscale_cifar10": "./statistics/fid_stats_cifar10_train.npz",
-#     "cifar10": "./statistics/fid_stats_cifar10_train.npz",
-#     "celeb_a": "./statistics/fid_stats_celeb_a_train.npz"
-# }
+import configs
+import utils
+from datasets.dataset_loader import load_data, preprocess
+from ood_detection_helper import compute_weighted_scores
 
 
-# def decode_img(img):
-#     # convert the compressed string to a 3D uint8 tensor
-#     img = tf.image.decode_jpeg(img, channels=3)
-#     # Use `convert_image_dtype` to convert to floats in the [0,1] range.
-#     img = tf.image.convert_image_dtype(img, tf.float32)
-#     # resize the image to the desired size.
-#     return img
+def compute_and_save_score_norms(model, dataset, score_cache_filename):
+
+    # load dataset from tfds with test/ood data
+    train, val, test = load_data(dataset, include_ood=True)
+
+    # Create a dictionary of score results
+    datasets = {
+        "train": train,
+        "val": val,
+        "ood": test,
+    }
+    scores = {}
+
+    for name, ds in datasets.items():
+        ds = preprocess(dataset, ds, train=False)
+        ds = ds.batch(configs.config_values.batch_size)
+        ds = ds.prefetch(tf.data.AUTOTUNE)
+        scores[name] = compute_weighted_scores(model, ds).numpy()
+
+    np.savez_compressed(score_cache_filename, **scores)
+
+    return scores
 
 
 def main():
-    pass
+
+    # path for saving the model(s)
+    save_dir, complete_model_name = utils.get_savemodel_dir()
+
+    model, optimizer, step, ocnn_model, ocnn_optimizer = utils.try_load_model(
+        save_dir,
+        step_ckpt=configs.config_values.resume_from,
+        verbose=True,
+        ocnn=configs.config_values.ocnn,
+    )
+
+    score_cache_filename = f"score_cache/{complete_model_name}"
+
+    if not os.path.exists(score_cache_filename):
+        compute_and_save_score_norms(
+            model, configs.config_values.dataset, score_cache_filename
+        )
