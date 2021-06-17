@@ -453,7 +453,7 @@ def try_load_model(
                 ckpt = tf.train.Checkpoint(step=step, optimizer=optimizer, model=model)
 
             ckpt.restore(checkpoint)
-            step = int(step)
+            step = int(tf.cast(step, tf.int32))
             print("Loaded model: " + checkpoint)
 
     return model, optimizer, step, ocnn_model, ocnn_optimizer
