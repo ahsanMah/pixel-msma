@@ -293,7 +293,7 @@ def get_savemodel_dir():
     model_name = configs.config_values.model
 
     # Folder name: model_name+filters+dataset+L
-    complete_model_name = "{}{}_{}-{}_L{}_SH{:.0e}_SL{:.0e}/".format(
+    complete_model_name = "{}{}_{}-{}_L{}_SH{:.0e}_SL{:.0e}".format(
         model_name,
         configs.config_values.filters,
         configs.config_values.dataset,
@@ -302,7 +302,7 @@ def get_savemodel_dir():
         configs.config_values.sigma_high,
         configs.config_values.sigma_low,
     )
-    folder_name = os.path.join(models_dir, complete_model_name)  # + '/'
+    folder_name = os.path.join(models_dir, complete_model_name) + "/"
     os.makedirs(folder_name, exist_ok=True)
 
     return folder_name, complete_model_name

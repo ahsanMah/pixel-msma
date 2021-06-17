@@ -20,8 +20,8 @@ mvtec_lowres:
 knee:
   datadir: "/home/PO3D/raw_data/knee/"
   datadir_longleaf: "/nas/longleaf/home/amahmood/mypine/DATA/knee"
-  shape: 128, 128, 1
-  downsample: 64, 64, 1
+  image_size: 128, 128, 1
+  shape: 64, 64, 1
   n_samples: 16690
 
 knee_highres:

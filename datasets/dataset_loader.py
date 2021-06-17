@@ -344,10 +344,12 @@ def mvtec_aug(x):
 
 @tf.function
 def knee_preproc(x):
-    shape = configs.dataconfig[configs.config_values.dataset]["downsample"]
+    shape = configs.dataconfig[configs.config_values.dataset]["shape"]
     img_sz = int(shape.split(",")[0].strip())
     x = tf.image.resize(x, (img_sz, img_sz))
+    x = (x - tf.reduce_min(x)) / (tf.reduce_max(x) - tf.reduce_min(x))
     print("Resized:", x.shape, img_sz)
+    # print("Rescaled:", tf.reduce_min(x), tf.reduce_max(x))
     return x
 
 
