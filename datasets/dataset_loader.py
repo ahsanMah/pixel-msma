@@ -131,35 +131,55 @@ def load_knee_data(include_ood=False):
     train_dataset = FastKnee(os.path.join(datadir, "singlecoil_train"))
     val_dataset = FastKnee(os.path.join(datadir, "singlecoil_val"))
 
+    img_h, img_w = 220, 160
+
     def make_generator(ds):
-        def tf_gen():
+        category = configs.config_values.class_label
+        kspace = category == "kspace"
+
+        def tf_gen_img():
             for k, x in ds:
                 img = complex_magnitude(x)
+                # Min Max normalize
+                h = img.quantile(0.999)
+                l = img.min()
+                img = (img - l) / (h - l)
                 img = img.numpy()[..., np.newaxis]
                 yield img
 
-        return tf_gen
+        def tf_gen_ksp():
+            for k, x in ds:
+                # Treat kspace as an image
+                img = complex_magnitude(k)
+                # Min Max normalize
+                h = img.quantile(0.999)
+                l = img.min()
+                img = (img - l) / (h - l)
+                img = img.numpy()[..., np.newaxis]
+                yield img
 
-    # def tf_gen_val():
-    #     for k, x in val_dataset:
-    #         img = to_magnitude(x, dim=0)
-    #         img = img.numpy()[..., np.newaxis]
-    #         yield img
+        if kspace:
+            print("Training on knee kspace...")
+            tf_gen = tf_gen_ksp
+        else:
+            tf_gen = tf_gen_img
+
+        return tf_gen
 
     train_ds = tf.data.Dataset.from_generator(
         make_generator(train_dataset),
-        output_signature=(tf.TensorSpec(shape=(128, 128, 1), dtype=tf.float32)),
+        output_signature=(tf.TensorSpec(shape=(img_h, img_w, 1), dtype=tf.float32)),
     )
     val_ds = tf.data.Dataset.from_generator(
         make_generator(val_dataset),
-        output_signature=(tf.TensorSpec(shape=(128, 128, 1), dtype=tf.float32)),
+        output_signature=(tf.TensorSpec(shape=(img_h, img_w, 1), dtype=tf.float32)),
     )
 
     if include_ood:
         test_dataset = FastKneeTumor(os.path.join(datadir, "singlecoil_test_v2"))
         test_ds = tf.data.Dataset.from_generator(
             make_generator(test_dataset),
-            output_signature=(tf.TensorSpec(shape=(128, 128, 1), dtype=tf.float32)),
+            output_signature=(tf.TensorSpec(shape=(img_h, img_w, 1), dtype=tf.float32)),
         )
 
         return train_ds, val_ds, test_ds
@@ -345,10 +365,10 @@ def mvtec_aug(x):
 @tf.function
 def knee_preproc(x):
     shape = configs.dataconfig[configs.config_values.dataset]["shape"]
-    img_sz = int(shape.split(",")[0].strip())
-    x = tf.image.resize(x, (img_sz, img_sz))
-    x = (x - tf.reduce_min(x)) / (tf.reduce_max(x) - tf.reduce_min(x))
-    print("Resized:", x.shape, img_sz)
+    h, w, c = [int(x.strip()) for x in shape.split(",")]
+    x = tf.image.resize(x, (h, w))
+    # x = (x - tf.reduce_min(x)) / (tf.reduce_max(x) - tf.reduce_min(x))
+    print("Resized:", x.shape)
     # print("Rescaled:", tf.reduce_min(x), tf.reduce_max(x))
     return x
 

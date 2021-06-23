@@ -20,6 +20,8 @@ from torch.fft import fft2 as fft
 from torch.fft import ifft2 as ifft
 from torch.fft import fftshift, ifftshift
 
+import tensorflow as tf
+
 
 class FastKnee(Dataset):
     def __init__(self, root):
@@ -65,11 +67,25 @@ class FastKnee(Dataset):
             # plt.show()
 
             # center crop and resize
-            target = torch.unsqueeze(target, dim=0)
-            target = center_crop(target, (128, 128))
-            target = torch.squeeze(target)
+            # target = torch.unsqueeze(target, dim=0)
+            # target = center_crop(target, (128, 128))
+            # target = torch.squeeze(target)
+
+            # Crop out ends
+            target = np.stack([target.real, target.imag], axis=-1)
+            target = target[100:-100, 24:-24, :]
+            # Downsample in image space
+            shape = target.shape
+            target = tf.image.resize(
+                target,
+                (220, 160),
+                method="lanczos5",
+                # preserve_aspect_ratio=True,
+                antialias=True,
+            ).numpy()
 
             # Get kspace of cropped image
+            target = torch.view_as_complex(torch.from_numpy(target))
             kspace = fftshift(target, dim=(0, 1))
             kspace = fft(kspace, dim=(0, 1))
             # Realign kspace to keep high freq signal in center
@@ -113,15 +129,29 @@ class FastKneeTumor(FastKnee):
 
             # transform
             target = torch.stack([target.real, target.imag])
-            target = self.deform(target)
+            target = self.deform(target)  # outputs numpy
             target = torch.from_numpy(target)
-
+            target = target.permute(1, 2, 0).contiguous()
+            print(target.shape)
             # center crop and resize
-            target = center_crop(target, (128, 128))
+            # target = center_crop(target, (128, 128))
             # target = resize(target, (128,128))
 
+            # Crop out ends
+            target = target.numpy()[100:-100, 24:-24, :]
+            # Downsample in image space
+            target = tf.image.resize(
+                target,
+                (220, 160),
+                method="lanczos5",
+                # preserve_aspect_ratio=True,
+                antialias=True,
+            ).numpy()
+
             # Making contiguous is necessary for complex view
-            target = target.permute(1, 2, 0).contiguous()
+            target = torch.from_numpy(target)
+            target = target.contiguous()
+            print(target.shape)
             target = torch.view_as_complex(target)
 
             kspace = fftshift(target, dim=(0, 1))
