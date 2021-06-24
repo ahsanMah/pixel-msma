@@ -634,10 +634,10 @@ def build_distributed_trainers(
                 scores = model([x_batch_perturbed, idx_sigmas])
                 current_loss = dsm_loss(scores, x_batch_perturbed, x_batch, sigmas)
 
-                if mixed_precision.global_policy().name == "mixed_float16":
+                if configs.config_values.mixed_precision:
                     scaled_loss = optimizer.get_scaled_loss(current_loss)
 
-            if mixed_precision.global_policy().name == "mixed_float16":
+            if configs.config_values.mixed_precision:
                 gradients = t.gradient(scaled_loss, model.trainable_variables)
                 gradients = optimizer.get_unscaled_gradients(gradients)
             else:

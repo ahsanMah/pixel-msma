@@ -96,7 +96,7 @@ def main():
             ocnn=configs.config_values.ocnn,
         )
 
-        if policy_name == "mixed_float16":
+        if configs.config_values.mixed_precision:
             print("Using mixed-prec optimizer...")
             if OLD_TF:
                 optimizer = mixed_precision.experimental.LossScaleOptimizer(
