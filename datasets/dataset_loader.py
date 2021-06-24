@@ -14,8 +14,8 @@ import pathlib
 from .mri_utils import complex_magnitude
 from .fastmri import FastKnee, FastKneeTumor
 
-# AUTOTUNE = tf.data.experimental.AUTOTUNE
-AUTOTUNE = tf.data.AUTOTUNE
+AUTOTUNE = tf.data.experimental.AUTOTUNE
+# AUTOTUNE = tf.data.AUTOTUNE
 
 CIFAR_LABELS = [
     "background",
@@ -127,11 +127,44 @@ def load_knee_data(include_ood=False):
     if configs.config_values.longleaf:
         _key += "_longleaf"
 
+    max_marginal_ratio = configs.config_values.marginal_ratio
+    mask_marginals = configs.config_values.mask_marginals
     datadir = configs.dataconfig["knee"][_key]
     train_dataset = FastKnee(os.path.join(datadir, "singlecoil_train"))
     val_dataset = FastKnee(os.path.join(datadir, "singlecoil_val"))
 
     img_h, img_w = 220, 160
+    c = 1
+    if mask_marginals:
+        c = 2
+
+    def build_and_apply_random_mask(x):
+        # Building mask of random columns
+        rand_ratio = np.random.uniform(low=0.0, high=max_marginal_ratio, size=1)
+        n_mask_cols = int(rand_ratio * img_w)
+        rand_cols = np.random.randint(img_w, size=n_mask_cols)
+        # We do not want the middle low frequencies
+        low_freq_cols = np.arange(int(0.4 * img_w), img_w - int(0.4 * img_w))
+        mask = np.ones((img_h, img_w, 1))
+        mask[:, rand_cols] = 0.0
+        mask[:, low_freq_cols] = 1.0
+
+        # Applying + Appending mask
+        x = x * mask
+        x = np.concatenate([x, mask], axis=-1)
+        return x
+
+    def normalize(img):
+        # Min Max normalize
+        h = img.quantile(0.9999)
+        l = img.min()
+        img = (img - l) / (h - l)
+        img = np.clip(
+            img,
+            0.0,
+            1.0,
+        )
+        return img
 
     def make_generator(ds):
         category = configs.config_values.class_label
@@ -140,22 +173,19 @@ def load_knee_data(include_ood=False):
         def tf_gen_img():
             for k, x in ds:
                 img = complex_magnitude(x)
-                # Min Max normalize
-                h = img.quantile(0.999)
-                l = img.min()
-                img = (img - l) / (h - l)
-                img = img.numpy()[..., np.newaxis]
+                img = normalize(img)
+                # Add a channel
+                img = img[..., np.newaxis]
                 yield img
 
         def tf_gen_ksp():
             for k, x in ds:
                 # Treat kspace as an image
                 img = complex_magnitude(k)
-                # Min Max normalize
-                h = img.quantile(0.999)
-                l = img.min()
-                img = (img - l) / (h - l)
-                img = img.numpy()[..., np.newaxis]
+                img = normalize(img)
+                img = img[..., np.newaxis]
+                if mask_marginals:
+                    img = build_and_apply_random_mask(img)
                 yield img
 
         if kspace:
@@ -168,18 +198,24 @@ def load_knee_data(include_ood=False):
 
     train_ds = tf.data.Dataset.from_generator(
         make_generator(train_dataset),
-        output_signature=(tf.TensorSpec(shape=(img_h, img_w, 1), dtype=tf.float32)),
+        tf.float32,
+        tf.TensorShape([img_h, img_w, c]),
+        # output_signature=(tf.TensorSpec(shape=(img_h, img_w, c), dtype=tf.float32)),
     )
     val_ds = tf.data.Dataset.from_generator(
         make_generator(val_dataset),
-        output_signature=(tf.TensorSpec(shape=(img_h, img_w, 1), dtype=tf.float32)),
+        tf.float32,
+        tf.TensorShape([img_h, img_w, c]),
+        # output_signature=(tf.TensorSpec(shape=(img_h, img_w, c), dtype=tf.float32)),
     )
 
     if include_ood:
         test_dataset = FastKneeTumor(os.path.join(datadir, "singlecoil_test_v2"))
         test_ds = tf.data.Dataset.from_generator(
             make_generator(test_dataset),
-            output_signature=(tf.TensorSpec(shape=(img_h, img_w, 1), dtype=tf.float32)),
+            tf.float32,
+            tf.TensorShape([img_h, img_w, 1]),
+            # output_signature=(tf.TensorSpec(shape=(img_h, img_w, c), dtype=tf.float32)),
         )
 
         return train_ds, val_ds, test_ds
@@ -409,6 +445,9 @@ aug_map = {
     "mvtec_lowres": mvtec_aug,
 }
 
+# Datasets too big (or randomly generated )to cache
+cache_blacklist = {"knee"}
+
 
 def preprocess(dataset_name, data, train=True):
 
@@ -425,7 +464,8 @@ def preprocess(dataset_name, data, train=True):
 
     # Caching offline data
     # data = data.cache(f"/tmp/tfcache/{dataset_name}")
-    data = data.cache()
+    if dataset_name not in cache_blacklist:
+        data = data.cache()
 
     if train and dataset_name in aug_map:
         data = data.map(aug_map[dataset_name], num_parallel_calls=2)

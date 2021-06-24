@@ -96,8 +96,7 @@ def check_args_validity(args):
     if args.max_to_keep == -1:
         args.max_to_keep = None
 
-    if args.marginal_ratio > 0.0:
-        args.mask_marginals = True
+    args.mask_marginals = args.marginal_ratio > 0.0
 
     args.split = args.split.split(",")
     args.split = list(map(lambda x: x.strip(), args.split))
