@@ -275,6 +275,12 @@ def _build_parser():
         help="ratio of marginals to mask out",
     )
 
+    parser.add_argument(
+        "--mixed_precision",
+        action="store_true",
+        help="training with mixed precision can help reduce memory footprint and increase batch size",
+    )
+
     return parser
 
 
