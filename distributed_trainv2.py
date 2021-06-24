@@ -3,15 +3,18 @@ from datetime import datetime
 
 import tensorflow as tf
 
-OLD_TF = tf.__version__ < '2.4.0'
+OLD_TF = tf.__version__ < "2.4.0"
 
 if OLD_TF:
-  print("Using TF < 2.4:", tf.__version__)
-  import tensorflow.keras.mixed_precision.experimental as mixed_precision
-  mixed_precision.set_global_policy = mixed_precision.set_policy
-  AUTOTUNE = tf.data.experimental.AUTOTUNE
+    print("Using TF < 2.4:", tf.__version__)
+    import tensorflow.keras.mixed_precision.experimental as mixed_precision
+
+    mixed_precision.set_global_policy = mixed_precision.set_policy
+    AUTOTUNE = tf.data.experimental.AUTOTUNE
 else:
     from tensorflow.keras import mixed_precision
+
+    AUTOTUNE = tf.data.AUTOTUNE
 
 from tqdm import tqdm
 
@@ -26,12 +29,12 @@ LOGGER = tf.get_logger()
 
 def main():
 
-    policy_name = 'float32'
+    policy_name = "float32"
 
     if configs.config_values.mixed_precision:
-        policy_name = 'mixed_float16'
-    
-    if tf.__version__ < '2.4.0':
+        policy_name = "mixed_float16"
+
+    if tf.__version__ < "2.4.0":
         policy = tf.keras.mixed_precision.experimental.Policy(policy_name)
         tf.keras.mixed_precision.experimental.set_policy(policy)
     else:
@@ -93,7 +96,7 @@ def main():
             ocnn=configs.config_values.ocnn,
         )
 
-        if mixed_precision.global_policy().name == "mixed_float16":
+        if policy_name == "mixed_float16":
             print("Using mixed-prec optimizer...")
             if OLD_TF:
                 optimizer = mixed_precision.experimental.LossScaleOptimizer(
@@ -136,7 +139,7 @@ def main():
     if configs.config_values.dataset != "celeb_a":
         train_data = train_data.batch(GLOBAL_BATCH_SIZE)
     train_data = train_data.repeat()
-    train_data = train_data.prefetch(buffer_size=tf.data.AUTOTUNE)
+    train_data = train_data.prefetch(buffer_size=AUTOTUNE)
 
     test_data = test_data.batch(GLOBAL_BATCH_SIZE)
     test_data = test_data.take(32).cache()
