@@ -5,12 +5,12 @@ import pandas as pd
 import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
-import plotly as py
-import plotly.graph_objs as go
+# import plotly as py
+# import plotly.graph_objs as go
 import matplotlib.pyplot as plt
 
 from tqdm.auto import tqdm
-from skimage import draw
+# from skimage import draw
 from sklearn.metrics import roc_curve
 from sklearn.metrics import classification_report, average_precision_score
 from sklearn.metrics import roc_auc_score, precision_recall_curve, auc

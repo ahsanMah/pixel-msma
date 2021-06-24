@@ -2,7 +2,17 @@ import csv
 from datetime import datetime
 
 import tensorflow as tf
-from tensorflow.keras import mixed_precision
+
+OLD_TF = tf.__version__ < '2.4.0'
+
+if OLD_TF:
+  print("Using TF < 2.4:", tf.__version__)
+  import tensorflow.keras.mixed_precision.experimental as mixed_precision
+  mixed_precision.set_global_policy = mixed_precision.set_policy
+  AUTOTUNE = tf.data.experimental.AUTOTUNE
+else:
+    from tensorflow.keras import mixed_precision
+
 from tqdm import tqdm
 
 import configs
@@ -16,8 +26,17 @@ LOGGER = tf.get_logger()
 
 def main():
 
-    policy = mixed_precision.Policy("mixed_float16")
-    mixed_precision.set_global_policy(policy)
+    policy_name = 'float32'
+
+    if configs.config_values.mixed_precision:
+        policy_name = 'mixed_float16'
+    
+    if tf.__version__ < '2.4.0':
+        policy = tf.keras.mixed_precision.experimental.Policy(policy_name)
+        tf.keras.mixed_precision.experimental.set_policy(policy)
+    else:
+        policy = mixed_precision.Policy(policy_name)
+        mixed_precision.set_global_policy(policy)
 
     strategy = tf.distribute.MirroredStrategy()
 
@@ -76,7 +95,12 @@ def main():
 
         if mixed_precision.global_policy().name == "mixed_float16":
             print("Using mixed-prec optimizer...")
-            optimizer = mixed_precision.LossScaleOptimizer(optimizer)
+            if OLD_TF:
+                optimizer = mixed_precision.experimental.LossScaleOptimizer(
+                    optimizer, loss_scale="dynamic"
+                )
+            else:
+                optimizer = mixed_precision.LossScaleOptimizer(optimizer)
 
         # Checkpoint should also be under strategy
         ckpt = tf.train.Checkpoint(
@@ -108,14 +132,14 @@ def main():
     train_data, test_data = get_train_test_data(configs.config_values.dataset)
 
     # # split data into batches
-    train_data = train_data.shuffle(buffer_size=10)
+    train_data = train_data.shuffle(buffer_size=1000)
     if configs.config_values.dataset != "celeb_a":
         train_data = train_data.batch(GLOBAL_BATCH_SIZE)
     train_data = train_data.repeat()
     train_data = train_data.prefetch(buffer_size=tf.data.AUTOTUNE)
 
     test_data = test_data.batch(GLOBAL_BATCH_SIZE)
-    test_data = test_data.take(2).cache()
+    test_data = test_data.take(32).cache()
 
     train_data = strategy.experimental_distribute_dataset(train_data)
     test_data = strategy.experimental_distribute_dataset(test_data)

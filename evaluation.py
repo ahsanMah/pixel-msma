@@ -2,6 +2,11 @@ import os
 
 import numpy as np
 import tensorflow as tf
+OLD_TF = tf.__version__ < '2.4.0'
+
+if OLD_TF:
+  print("Using TF < 2.4:", tf.__version__)
+  AUTOTUNE = tf.data.experimental.AUTOTUNE
 
 import configs
 import utils
@@ -25,7 +30,7 @@ def compute_and_save_score_norms(model, dataset, score_cache_filename):
     for name, ds in datasets.items():
         ds = preprocess(dataset, ds, train=False)
         ds = ds.batch(configs.config_values.batch_size)
-        ds = ds.prefetch(tf.data.AUTOTUNE)
+        ds = ds.prefetch(AUTOTUNE)
         scores[name] = compute_weighted_scores(model, ds).numpy()
 
     np.savez_compressed(score_cache_filename, **scores)

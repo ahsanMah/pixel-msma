@@ -214,7 +214,7 @@ def load_knee_data(include_ood=False):
         test_ds = tf.data.Dataset.from_generator(
             make_generator(test_dataset),
             tf.float32,
-            tf.TensorShape([img_h, img_w, 1]),
+            tf.TensorShape([img_h, img_w, c]),
             # output_signature=(tf.TensorSpec(shape=(img_h, img_w, c), dtype=tf.float32)),
         )
 
