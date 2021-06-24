@@ -2,11 +2,14 @@ import os
 
 import numpy as np
 import tensorflow as tf
-OLD_TF = tf.__version__ < '2.4.0'
+
+OLD_TF = tf.__version__ < "2.4.0"
 
 if OLD_TF:
-  print("Using TF < 2.4:", tf.__version__)
-  AUTOTUNE = tf.data.experimental.AUTOTUNE
+    print("Using TF < 2.4:", tf.__version__)
+    AUTOTUNE = tf.data.experimental.AUTOTUNE
+else:
+    AUTOTUNE = tf.data.AUTOTUNE
 
 import configs
 import utils
