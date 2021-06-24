@@ -79,9 +79,9 @@ def find_k_closest(image, k, data_as_array):
 
 
 def get_dataset_image_size(dataset_name):
-    return tuple(
+    return [
         int(x.strip()) for x in configs.dataconfig[dataset_name]["shape"].split(",")
-    )
+    ]
 
 
 def check_args_validity(args):
@@ -95,13 +95,20 @@ def check_args_validity(args):
     ]
     if args.max_to_keep == -1:
         args.max_to_keep = None
+
+    if args.marginal_ratio > 0.0:
+        args.mask_marginals = True
+
     args.split = args.split.split(",")
     args.split = list(map(lambda x: x.strip(), args.split))
     return
 
 
 def _build_parser():
-    parser = argparse.ArgumentParser(description="CLI Options")
+    parser = argparse.ArgumentParser(
+        description="CLI Options",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument(
         "--experiment", default="train", help="what experiment to run (default: train)"
     )
@@ -213,35 +220,35 @@ def _build_parser():
         "--eval_setting",
         default="sample",
         type=str,
-        help="can be 'sample' or 'fid' (default: sample)",
+        help="can be 'sample' or 'fid'",
     )
     parser.add_argument(
         "--ocnn",
         action="store_true",
-        help="whether to attach an ocnn to the model (default: False)",
+        help="whether to attach an ocnn to the model",
     )
     parser.add_argument(
         "--y_cond",
         action="store_true",
-        help="whether the model is conditioned on auxiallary y information (default: False)",
+        help="whether the model is conditioned on auxiallary y information",
     )
     parser.add_argument(
         "--max_to_keep",
         default=2,
         type=int,
-        help="Number of checkopints to keep saved (default: 2)",
+        help="Number of checkopints to keep saved",
     )
     parser.add_argument(
         "--split",
         default="100,0",
         type=str,
-        help=r"optional train/validation split percentages e.g. 0.9*train, 0.1*train (default: all train, no val set)",
+        help=r"optional train/validation split percentages e.g. 0.9*train, 0.1*train (default means all train, no val set)",
     )
     parser.add_argument(
         "--T",
         default=100,
         type=int,
-        help="number of iterations to sample for each sigma (default: 100)",
+        help="number of iterations to sample for each sigma",
     )
     parser.add_argument(
         "--eps",
@@ -259,7 +266,14 @@ def _build_parser():
     parser.add_argument(
         "--longleaf",
         action="store_true",
-        help="whether model is running on longleaf server (default: False)",
+        help="whether model is running on longleaf server",
+    )
+
+    parser.add_argument(
+        "--marginal_ratio",
+        default=0.0,
+        type=float,
+        help="ratio of marginals to mask out",
     )
 
     return parser
@@ -292,11 +306,17 @@ def get_savemodel_dir():
     models_dir = configs.config_values.checkpoint_dir
     model_name = configs.config_values.model
 
+    # FIXME:
+    # change ds_name here!!
+    ds_name = configs.config_values.dataset
+    if configs.config_values.mask_marginals:
+        ds_name = f"{ds_name}_mr{configs.config_values.marginal_ratio}"
+
     # Folder name: model_name+filters+dataset+L
     complete_model_name = "{}{}_{}-{}_L{}_SH{:.0e}_SL{:.0e}".format(
         model_name,
         configs.config_values.filters,
-        configs.config_values.dataset,
+        ds_name,
         configs.config_values.class_label,
         configs.config_values.num_L,
         configs.config_values.sigma_high,
@@ -310,7 +330,11 @@ def get_savemodel_dir():
 
 def evaluate_print_model_summary(model, verbose=True):
     batch = 1
-    input_shape = (batch,) + get_dataset_image_size(configs.config_values.dataset)
+    input_shape = [
+        batch,
+    ] + get_dataset_image_size(configs.config_values.dataset)
+    if configs.config_values.mask_marginals:
+        input_shape[-1] += 1  # Append a mask channel
     print(input_shape)
     sigma_levels = get_sigma_levels()  # tf.linspace(0.0,1.0,3) #
     idx_sigmas = tf.ones(batch, dtype=tf.int32)
