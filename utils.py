@@ -311,8 +311,6 @@ def get_savemodel_dir():
     models_dir = configs.config_values.checkpoint_dir
     model_name = configs.config_values.model
 
-    # FIXME:
-    # change ds_name here!!
     ds_name = configs.config_values.dataset
     if configs.config_values.mask_marginals:
         ds_name = f"{ds_name}_mr{configs.config_values.marginal_ratio}"
@@ -338,8 +336,14 @@ def evaluate_print_model_summary(model, verbose=True):
     input_shape = [
         batch,
     ] + get_dataset_image_size(configs.config_values.dataset)
+
     if configs.config_values.mask_marginals:
         input_shape[-1] += 1  # Append a mask channel
+
+    # TODO: This is very hacky, find better solution
+    if configs.config_values.class_label == "kspace_complex":
+        input_shape[-1] += 1  # kspace is 2 channels
+
     print(input_shape)
     sigma_levels = get_sigma_levels()  # tf.linspace(0.0,1.0,3) #
     idx_sigmas = tf.ones(batch, dtype=tf.int32)

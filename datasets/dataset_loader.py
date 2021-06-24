@@ -123,6 +123,10 @@ def load_data(dataset_name, include_ood=False):
 
 
 def load_knee_data(include_ood=False):
+
+    category = configs.config_values.class_label
+    # kspace = "kspace" in category
+
     _key = "datadir"
     if configs.config_values.longleaf:
         _key += "_longleaf"
@@ -134,30 +138,21 @@ def load_knee_data(include_ood=False):
     val_dataset = FastKnee(os.path.join(datadir, "singlecoil_val"))
 
     img_h, img_w = 220, 160
-    c = 1
+    c = 2 if "kspace_complex" == category else 1
     if mask_marginals:
-        c = 2
+        c += 1
 
-    def build_and_apply_random_mask(x):
-        # Building mask of random columns
-        rand_ratio = np.random.uniform(low=0.0, high=max_marginal_ratio, size=1)
-        n_mask_cols = int(rand_ratio * img_w)
-        rand_cols = np.random.randint(img_w, size=n_mask_cols)
-        # We do not want the middle low frequencies
-        low_freq_cols = np.arange(int(0.4 * img_w), img_w - int(0.4 * img_w))
-        mask = np.ones((img_h, img_w, 1))
-        mask[:, rand_cols] = 0.0
-        mask[:, low_freq_cols] = 1.0
+    def normalize(img, complex_input=False, quantile=0.999):
 
-        # Applying + Appending mask
-        x = x * mask
-        x = np.concatenate([x, mask], axis=-1)
-        return x
+        # Complex tensors are 2D
+        if complex_input:
+            h = np.quantile(img.reshape(-1, 2), q=quantile, axis=0)
+            l = np.min(img.reshape(-1, 2), axis=0)
+        else:
+            h = np.quantile(img, q=quantile)
+            l = np.min(img)
 
-    def normalize(img):
         # Min Max normalize
-        h = img.quantile(0.9999)
-        l = img.min()
         img = (img - l) / (h - l)
         img = np.clip(
             img,
@@ -166,13 +161,28 @@ def load_knee_data(include_ood=False):
         )
         return img
 
-    def make_generator(ds):
-        category = configs.config_values.class_label
-        kspace = category == "kspace"
+    def build_and_apply_random_mask(x):
+        # Building mask of random columns
+        rand_ratio = np.random.uniform(low=0.0, high=max_marginal_ratio, size=1)
+        n_mask_cols = int(rand_ratio * img_w)
+        rand_cols = np.random.randint(img_w, size=n_mask_cols)
 
+        # We do *not* want to mask out the middle (low) frequencies
+        # Keeping 10% of low freq is equivalent to Scenario-30L in activemri paper
+        low_freq_cols = np.arange(int(0.45 * img_w), img_w - int(0.45 * img_w))
+        mask = np.ones((img_h, img_w, 1))
+        mask[:, rand_cols, :] = 0.0
+        mask[:, low_freq_cols, :] = 1.0
+
+        # Applying + Appending mask
+        x = x * mask
+        x = np.concatenate([x, mask], axis=-1)
+        return x
+
+    def make_generator(ds):
         def tf_gen_img():
             for k, x in ds:
-                img = complex_magnitude(x)
+                img = complex_magnitude(x).numpy()
                 img = normalize(img)
                 # Add a channel
                 img = img[..., np.newaxis]
@@ -180,21 +190,33 @@ def load_knee_data(include_ood=False):
 
         def tf_gen_ksp():
             for k, x in ds:
-                # Treat kspace as an image
-                img = complex_magnitude(k)
+                img = complex_magnitude(k).numpy()
                 img = normalize(img)
+                # Add a channel
                 img = img[..., np.newaxis]
                 if mask_marginals:
                     img = build_and_apply_random_mask(img)
                 yield img
 
-        if kspace:
-            print("Training on knee kspace...")
-            tf_gen = tf_gen_ksp
-        else:
-            tf_gen = tf_gen_img
+        def tf_gen_ksp_cplx():
+            for k, x in ds:
+                # Treat kspace as a 3D tensor (2 channels: real + imag)
+                img = np.stack([k.real, k.imag], axis=-1)
+                img = normalize(img, complex_input=True)
+                if mask_marginals:
+                    img = build_and_apply_random_mask(img)
+                yield img
 
-        return tf_gen
+        if "kspace" == category:
+            print("Training on image kspace...")
+            return tf_gen_ksp
+
+        if "kspace_complex" == category:
+            print("Training on complex kspace...")
+            return tf_gen_ksp_cplx
+
+        # Default to target image as category
+        return tf_gen_img
 
     train_ds = tf.data.Dataset.from_generator(
         make_generator(train_dataset),
@@ -402,7 +424,7 @@ def mvtec_aug(x):
 def knee_preproc(x):
     shape = configs.dataconfig[configs.config_values.dataset]["shape"]
     h, w, c = [int(x.strip()) for x in shape.split(",")]
-    x = tf.image.resize(x, (h, w))
+    x = tf.image.resize(x, (h, w), method="nearest")
     # x = (x - tf.reduce_min(x)) / (tf.reduce_max(x) - tf.reduce_min(x))
     print("Resized:", x.shape)
     # print("Rescaled:", tf.reduce_min(x), tf.reduce_max(x))

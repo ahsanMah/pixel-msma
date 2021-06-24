@@ -132,7 +132,6 @@ class FastKneeTumor(FastKnee):
             target = self.deform(target)  # outputs numpy
             target = torch.from_numpy(target)
             target = target.permute(1, 2, 0).contiguous()
-            print(target.shape)
             # center crop and resize
             # target = center_crop(target, (128, 128))
             # target = resize(target, (128,128))
@@ -151,7 +150,6 @@ class FastKneeTumor(FastKnee):
             # Making contiguous is necessary for complex view
             target = torch.from_numpy(target)
             target = target.contiguous()
-            print(target.shape)
             target = torch.view_as_complex(target)
 
             kspace = fftshift(target, dim=(0, 1))
