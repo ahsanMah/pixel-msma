@@ -139,18 +139,20 @@ def load_knee_data(include_ood=False):
 
     img_h, img_w = 220, 160
     c = 2 if "kspace_complex" == category else 1
-    if mask_marginals:
-        c += 1
+    # if mask_marginals:
+    #     c += 1
 
     def normalize(img, complex_input=False, quantile=0.999):
 
         # Complex tensors are 2D
         if complex_input:
             h = np.quantile(img.reshape(-1, 2), q=quantile, axis=0)
-            l = np.min(img.reshape(-1, 2), axis=0)
+            # l = np.min(img.reshape(-1, 2), axis=0)
+            l = np.quantile(img.reshape(-1, 2), q=(1 - quantile) / 10, axis=0)
         else:
             h = np.quantile(img, q=quantile)
-            l = np.min(img)
+            # l = np.min(img)
+            l = np.quantile(img, q=(1 - quantile) / 10)
 
         # Min Max normalize
         img = (img - l) / (h - l)
@@ -162,21 +164,21 @@ def load_knee_data(include_ood=False):
         return img
 
     def build_and_apply_random_mask(x):
-        # Building mask of random columns
-        rand_ratio = np.random.uniform(low=0.0, high=max_marginal_ratio, size=1)
-        n_mask_cols = int(rand_ratio * img_w)
-        rand_cols = np.random.randint(img_w, size=n_mask_cols)
+        # # Building mask of random columns
+        # rand_ratio = np.random.uniform(low=0.0, high=max_marginal_ratio, size=1)
+        # n_mask_cols = int(rand_ratio * img_w)
+        # rand_cols = np.random.randint(img_w, size=n_mask_cols)
 
-        # We do *not* want to mask out the middle (low) frequencies
-        # Keeping 10% of low freq is equivalent to Scenario-30L in activemri paper
-        low_freq_cols = np.arange(int(0.45 * img_w), img_w - int(0.45 * img_w))
-        mask = np.ones((img_h, img_w, 1))
-        mask[:, rand_cols, :] = 0.0
-        mask[:, low_freq_cols, :] = 1.0
+        # # We do *not* want to mask out the middle (low) frequencies
+        # # Keeping 10% of low freq is equivalent to Scenario-30L in activemri paper
+        # low_freq_cols = np.arange(int(0.45 * img_w), img_w - int(0.45 * img_w))
+        # mask = np.ones((img_h, img_w, 1))
+        # mask[:, rand_cols, :] = 0.0
+        # mask[:, low_freq_cols, :] = 1.0
 
-        # Applying + Appending mask
-        x = x * mask
-        x = np.concatenate([x, mask], axis=-1)
+        # # Applying + Appending mask
+        # x = x * mask
+        # x = np.concatenate([x, mask], axis=-1)
         return x
 
     def make_generator(ds):
@@ -194,8 +196,8 @@ def load_knee_data(include_ood=False):
                 img = normalize(img)
                 # Add a channel
                 img = img[..., np.newaxis]
-                if mask_marginals:
-                    img = build_and_apply_random_mask(img)
+                # if mask_marginals:
+                #     img = build_and_apply_random_mask(img)
                 yield img
 
         def tf_gen_ksp_cplx():
@@ -203,8 +205,8 @@ def load_knee_data(include_ood=False):
                 # Treat kspace as a 3D tensor (2 channels: real + imag)
                 img = np.stack([k.real, k.imag], axis=-1)
                 img = normalize(img, complex_input=True)
-                if mask_marginals:
-                    img = build_and_apply_random_mask(img)
+                # if mask_marginals:
+                #     img = build_and_apply_random_mask(img)
                 yield img
 
         if "kspace" == category:
@@ -424,10 +426,9 @@ def mvtec_aug(x):
 def knee_preproc(x):
     shape = configs.dataconfig[configs.config_values.dataset]["shape"]
     h, w, c = [int(x.strip()) for x in shape.split(",")]
-    x = tf.image.resize(x, (h, w), method="nearest")
-    # x = (x - tf.reduce_min(x)) / (tf.reduce_max(x) - tf.reduce_min(x))
+    x.set_shape((220, 160, 1))
+    x = tf.image.resize(x, (h, w), method="lanczos5")
     print("Resized:", x.shape)
-    # print("Rescaled:", tf.reduce_min(x), tf.reduce_max(x))
     return x
 
 
@@ -445,6 +446,36 @@ def knee_aug(x):
     x = tf.image.random_flip_up_down(x)
 
     return x
+
+
+def np_build_and_apply_random_mask(x):
+    # Building mask of random columns
+    batch_sz, img_h, img_w, c = x.shape
+    rand_ratio = np.random.uniform(
+        low=0.0, high=configs.config_values.marginal_ratio, size=1
+    )
+    n_mask_cols = int(rand_ratio * img_w)
+    rand_cols = np.random.randint(img_w, size=n_mask_cols)
+
+    # We do *not* want to mask out the middle (low) frequencies
+    # Keeping 10% of low freq is equivalent to Scenario-30L in activemri paper
+    low_freq_cols = np.arange(int(0.45 * img_w), img_w - int(0.45 * img_w))
+    mask = np.ones((batch_sz, img_h, img_w, 1), dtype=np.float32)
+    mask[:, :, rand_cols, :] = 0.0
+    mask[:, :, low_freq_cols, :] = 1.0
+
+    # Applying + Appending mask
+    x = x * mask
+    x = np.concatenate([x, mask], axis=-1)
+    return x
+
+
+def map_decorator(func):
+    def wrapper(x):
+        # Use a tf.py_function to prevent auto-graph from compiling the method
+        return tf.py_function(func, inp=(x), Tout=(x.dtype))
+
+    return wrapper
 
 
 preproc_map = {
@@ -468,7 +499,7 @@ aug_map = {
 }
 
 # Datasets too big (or randomly generated )to cache
-cache_blacklist = {"knee"}
+cache_blacklist = {}
 
 
 def preprocess(dataset_name, data, train=True):
@@ -485,9 +516,28 @@ def preprocess(dataset_name, data, train=True):
         data = data.map(lambda x: tf.image.resize(x["image"], (64, 64)))
 
     # Caching offline data
-    # data = data.cache(f"/tmp/tfcache/{dataset_name}")
+    fname = f"/tmp/{dataset_name}"
+    if not train:
+        fname += "_val"
+
+    # data = data.cache(fname)
+
     if dataset_name not in cache_blacklist:
         data = data.cache()
+    else:
+        data = data.cache()  # should be file for really large datasets
+
+    if train:
+        data = data.shuffle(buffer_size=1000, reshuffle_each_iteration=False)
+
+    if configs.config_values.dataset != "celeb_a":
+        data = data.batch(configs.config_values.global_batch_size)
+
+    if configs.config_values.mask_marginals:
+        _fn = lambda x: tf.numpy_function(
+            func=np_build_and_apply_random_mask, inp=[x], Tout=tf.float32
+        )
+        data = data.map(_fn, num_parallel_calls=AUTOTUNE)
 
     if train and dataset_name in aug_map:
         data = data.map(aug_map[dataset_name], num_parallel_calls=2)

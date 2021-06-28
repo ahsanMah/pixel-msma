@@ -20,7 +20,7 @@ from tqdm import tqdm
 
 import configs
 import utils
-from datasets.dataset_loader import get_train_test_data
+from datasets.dataset_loader import get_train_test_data, np_build_and_apply_random_mask
 from losses.losses import dsm_loss, ocnn_loss, update_radius, normalized_dsm_loss
 
 SIGMA_LEVELS = None
@@ -50,6 +50,7 @@ def main():
     GLOBAL_BATCH_SIZE = BATCH_SIZE_PER_REPLICA * NUM_REPLICAS
     LOG_FREQ = 100
     LOG_FREQ = configs.config_values.log_freq
+    configs.config_values.global_batch_size = GLOBAL_BATCH_SIZE
 
     # array of sigma levels
     # generate geometric sequence of values between sigma_low (0.01) and sigma_high (1.0)
@@ -135,13 +136,9 @@ def main():
     train_data, test_data = get_train_test_data(configs.config_values.dataset)
 
     # # split data into batches
-    train_data = train_data.shuffle(buffer_size=1000)
-    if configs.config_values.dataset != "celeb_a":
-        train_data = train_data.batch(GLOBAL_BATCH_SIZE)
     train_data = train_data.repeat()
     train_data = train_data.prefetch(buffer_size=AUTOTUNE)
 
-    test_data = test_data.batch(GLOBAL_BATCH_SIZE)
     test_data = test_data.take(32).cache()
 
     train_data = strategy.experimental_distribute_dataset(train_data)

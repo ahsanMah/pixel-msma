@@ -32,7 +32,7 @@ def compute_and_save_score_norms(model, dataset, score_cache_filename):
 
     for name, ds in datasets.items():
         ds = preprocess(dataset, ds, train=False)
-        ds = ds.batch(configs.config_values.batch_size)
+        # ds = ds.batch(configs.config_values.batch_size)
         ds = ds.prefetch(AUTOTUNE)
         scores[name] = compute_weighted_scores(model, ds).numpy()
 
@@ -41,7 +41,28 @@ def compute_and_save_score_norms(model, dataset, score_cache_filename):
     return scores
 
 
+def partial_observation_eval(model, complete_model_name):
+    max_marginal_ratio = configs.config_values.marginal_ratio
+    dataset = configs.config_values.dataset
+    score_cache_dir = os.path.join("score_cache", dataset, complete_model_name)
+    os.makedirs(score_cache_dir, exist_ok=True)
+
+    for ratio in np.linspace(0.1, max_marginal_ratio, num=5):
+        print(f"Evaluating for observation ratio {ratio}")
+        configs.config_values.marginal_ratio = ratio
+        score_cache_filename = f"{score_cache_dir}/eval_mr{ratio}"
+
+        if not os.path.exists(score_cache_filename):
+            compute_and_save_score_norms(model, dataset, score_cache_filename)
+        else:
+            print(f"Score cache '{score_cache_filename}' already exists!")
+    return
+
+
 def main():
+
+    tf.random.set_seed(42)
+    np.random.seed(42)
 
     # path for saving the model(s)
     save_dir, complete_model_name = utils.get_savemodel_dir()
@@ -52,6 +73,11 @@ def main():
         verbose=True,
         ocnn=configs.config_values.ocnn,
     )
+
+    configs.config_values.global_batch_size = configs.config_values.batch_size
+
+    if configs.config_values.mask_marginals:
+        return partial_observation_eval(model, complete_model_name)
 
     score_cache_filename = f"score_cache/{complete_model_name}"
 
