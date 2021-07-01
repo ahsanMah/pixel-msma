@@ -74,6 +74,7 @@ class FastKnee(Dataset):
             # Crop out ends
             target = np.stack([target.real, target.imag], axis=-1)
             target = target[100:-100, 24:-24, :]
+
             # Downsample in image space
             shape = target.shape
             target = tf.image.resize(
@@ -95,11 +96,6 @@ class FastKnee(Dataset):
             # Normalize using mean of k-space in training data
             target /= 7.072103529760345e-07
             kspace /= 7.072103529760345e-07
-
-            # TODO: Should I convert to image tensors here..?
-            # to pytorch format
-            # kspace = kspace.permute(2, 0, 1)
-            # target = target.permute(2, 0, 1)
 
         return kspace, target
 
@@ -169,7 +165,7 @@ if __name__ == "__main__":
     print(ksp.shape, tar.shape)
     import matplotlib.pyplot as plt
 
-    img = to_magnitude(tar, dim=0)
+    img = complex_magnitude(tar)
     plt.imsave("normal.png", img)
 
     dataset = FastKneeTumor("/home/PO3D/raw_data/knee/singlecoil_val/")
@@ -177,5 +173,5 @@ if __name__ == "__main__":
     print(ksp.shape, tar.shape)
     import matplotlib.pyplot as plt
 
-    img = to_magnitude(tar, dim=0)
+    img = complex_magnitude(tar)
     plt.imsave("tumor.png", img)

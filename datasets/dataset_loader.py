@@ -449,7 +449,7 @@ def knee_aug(x):
 
 
 def np_build_and_apply_random_mask(x):
-    # Building mask of random columns
+    # Building mask of random columns to **keep**
     batch_sz, img_h, img_w, c = x.shape
     rand_ratio = np.random.uniform(
         low=0.0, high=configs.config_values.marginal_ratio, size=1
@@ -460,8 +460,8 @@ def np_build_and_apply_random_mask(x):
     # We do *not* want to mask out the middle (low) frequencies
     # Keeping 10% of low freq is equivalent to Scenario-30L in activemri paper
     low_freq_cols = np.arange(int(0.45 * img_w), img_w - int(0.45 * img_w))
-    mask = np.ones((batch_sz, img_h, img_w, 1), dtype=np.float32)
-    mask[:, :, rand_cols, :] = 0.0
+    mask = np.zeros((batch_sz, img_h, img_w, 1), dtype=np.float32)
+    mask[:, :, rand_cols, :] = 1.0
     mask[:, :, low_freq_cols, :] = 1.0
 
     # Applying + Appending mask
@@ -525,7 +525,7 @@ def preprocess(dataset_name, data, train=True):
     if dataset_name not in cache_blacklist:
         data = data.cache()
     else:
-        data = data.cache()  # should be file for really large datasets
+        data = data.cache(fname)  # should be file for really large datasets
 
     if train:
         data = data.shuffle(buffer_size=1000, reshuffle_each_iteration=False)
