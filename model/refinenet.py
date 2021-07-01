@@ -63,7 +63,8 @@ class RefineNetV1(keras.Model):
         self.in_shape = input_shape
         out_shape = input_shape[0][-1]
         if self.y_conditioned:
-            out_shape = self.splits[0]
+            # out_shape = self.splits[0]
+            out_shape = out_shape - 1  # Ignore mask dimension
 
         self.decrease_channels = layers.Conv2D(
             out_shape, kernel_size=3, strides=1, padding="same"
@@ -150,7 +151,7 @@ class RefineNet(keras.Model):
         self.in_shape = input_shape
         out_shape = input_shape[0][-1]
         if self.y_conditioned:
-            out_shape = self.splits[0]
+            out_shape = out_shape - 1  # Ignore mask dimension
 
         self.decrease_channels = layers.Conv2D(
             out_shape, kernel_size=3, strides=1, padding="same"

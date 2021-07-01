@@ -57,12 +57,6 @@ def main():
     SIGMA_LEVELS = utils.get_sigma_levels()
     NUM_L = configs.config_values.num_L
 
-    if (
-        configs.config_values.y_cond
-        or configs.config_values.model == "masked_refinenet"
-    ):
-        SPLITS = utils.dict_splits[configs.config_values.dataset]
-
     # path for saving the model(s)
     save_dir, complete_model_name = utils.get_savemodel_dir()
 

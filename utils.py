@@ -97,6 +97,7 @@ def check_args_validity(args):
         args.max_to_keep = None
 
     args.mask_marginals = args.marginal_ratio > 0.0
+    args.y_cond = args.marginal_ratio > 0.0
 
     args.split = args.split.split(",")
     args.split = list(map(lambda x: x.strip(), args.split))
@@ -379,8 +380,8 @@ def try_load_model(
         configs.config_values.num_L = 1
 
     splits = False
-    if configs.config_values.y_cond:
-        splits = dict_splits[configs.config_values.dataset]
+    # if configs.config_values.y_cond:
+    #     splits = dict_splits[configs.config_values.dataset]
 
     # initialize return values
     model_name = configs.config_values.model
@@ -605,6 +606,8 @@ def build_distributed_trainers(
 
     num_L = sigma_levels.shape[0]
     train_loss, test_loss = loss_aggregators
+    input_shape = get_dataset_image_size(configs.config_values.dataset)
+    channels = input_shape[-1]
 
     @tf.function(experimental_compile=True)
     def dsm_loss(score, x_perturbed, x, sigmas):
@@ -628,10 +631,25 @@ def build_distributed_trainers(
             )
             sigmas = tf.gather(sigma_levels, idx_sigmas)
             sigmas = tf.reshape(sigmas, shape=(x_batch.shape[0], 1, 1, 1))
-            x_batch_perturbed = x_batch + tf.random.normal(shape=x_batch.shape) * sigmas
+
+            if configs.config_values.y_cond:
+                # --> Noise may only be applied to foreground
+                x_batch, masks = tf.split(x_batch, (channels, 1), axis=-1)
+                perturbation = tf.random.normal(shape=x_batch.shape) * sigmas
+                # perturbation = tf.multiply(perturbation, masks)
+
+                # Used for calculating loss
+                x_batch_perturbed = x_batch + perturbation
+                # Input has conditioning information
+                x_batch_input = tf.concat((x_batch_perturbed, masks), axis=-1)
+            else:
+                x_batch_perturbed = (
+                    x_batch + tf.random.normal(shape=x_batch.shape) * sigmas
+                )
+                x_batch_input = x_batch_perturbed
 
             with tf.GradientTape() as t:
-                scores = model([x_batch_perturbed, idx_sigmas])
+                scores = model([x_batch_input, idx_sigmas])
                 current_loss = dsm_loss(scores, x_batch_perturbed, x_batch, sigmas)
 
                 if configs.config_values.mixed_precision:
@@ -670,9 +688,23 @@ def build_distributed_trainers(
             sigmas = tf.gather(sigma_levels, idx_sigmas)
             sigmas = tf.reshape(sigmas, shape=(x_batch.shape[0], 1, 1, 1))
 
-            x_batch_perturbed = x_batch + tf.random.normal(shape=x_batch.shape) * sigmas
+            if configs.config_values.y_cond:
+                # --> Noise may only be applied to foreground
+                x_batch, masks = tf.split(x_batch, (channels, 1), axis=-1)
+                perturbation = tf.random.normal(shape=x_batch.shape) * sigmas
+                # perturbation = tf.multiply(perturbation, masks)
 
-            scores = model([x_batch_perturbed, idx_sigmas])
+                # Used for calculating loss
+                x_batch_perturbed = x_batch + perturbation
+                # Input has conditioning information
+                x_batch_input = tf.concat((x_batch_perturbed, masks), axis=-1)
+            else:
+                x_batch_perturbed = (
+                    x_batch + tf.random.normal(shape=x_batch.shape) * sigmas
+                )
+                x_batch_input = x_batch_perturbed
+
+            scores = model([x_batch_input, idx_sigmas])
             loss = dsm_loss(scores, x_batch_perturbed, x_batch, sigmas)
             return loss
 
