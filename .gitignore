@@ -3,6 +3,8 @@ logs/*
 samples/*
 saved_models/*
 data/*
+figs/*
+score_cache/*
 *.ipynb
 
 # Byte-compiled / optimized / DLL files
