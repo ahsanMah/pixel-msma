@@ -213,9 +213,9 @@ def sample_and_save(
         os.makedirs(save_directory)
 
     if x is None:
-        image_size = (n_images,) + utils.get_dataset_image_size(
-            configs.config_values.dataset
-        )
+        image_size = [
+            n_images,
+        ] + utils.get_dataset_image_size(configs.config_values.dataset)
         x = tf.random.uniform(shape=image_size)
     else:
         image_size = x.shape
