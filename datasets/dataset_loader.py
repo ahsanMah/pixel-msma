@@ -461,7 +461,7 @@ def map_decorator(func):
 
 
 preproc_map = {
-    "knee_highres": knee_preproc_hres,
+    "knee_complex": knee_preproc,
     "knee": knee_preproc,
     "mvtec": mvtec_preproc,
     "mvtec_lowres": mvtec_preproc,
