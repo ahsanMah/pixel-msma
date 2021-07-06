@@ -125,7 +125,7 @@ def load_data(dataset_name, include_ood=False):
 def load_knee_data(include_ood=False):
 
     category = configs.config_values.class_label
-    # kspace = "kspace" in category
+    complex_input = "complex" in configs.config_values.dataset
 
     _key = "datadir"
     if configs.config_values.longleaf:
@@ -137,10 +137,7 @@ def load_knee_data(include_ood=False):
     train_dataset = FastKnee(os.path.join(datadir, "singlecoil_train"))
     val_dataset = FastKnee(os.path.join(datadir, "singlecoil_val"))
 
-    img_h, img_w = 220, 160
-    c = 2 if "kspace_complex" == category else 1
-    # if mask_marginals:
-    #     c += 1
+    img_h, img_w, c = utils.get_dataset_image_size(configs.config_values.dataset)
 
     def normalize(img, complex_input=False, quantile=0.999):
 
@@ -163,61 +160,40 @@ def load_knee_data(include_ood=False):
         )
         return img
 
-    def build_and_apply_random_mask(x):
-        # # Building mask of random columns
-        # rand_ratio = np.random.uniform(low=0.0, high=max_marginal_ratio, size=1)
-        # n_mask_cols = int(rand_ratio * img_w)
-        # rand_cols = np.random.randint(img_w, size=n_mask_cols)
-
-        # # We do *not* want to mask out the middle (low) frequencies
-        # # Keeping 10% of low freq is equivalent to Scenario-30L in activemri paper
-        # low_freq_cols = np.arange(int(0.45 * img_w), img_w - int(0.45 * img_w))
-        # mask = np.ones((img_h, img_w, 1))
-        # mask[:, rand_cols, :] = 0.0
-        # mask[:, low_freq_cols, :] = 1.0
-
-        # # Applying + Appending mask
-        # x = x * mask
-        # x = np.concatenate([x, mask], axis=-1)
-        return x
-
     def make_generator(ds):
+
+        if complex_input:
+            # Treat input as a 3D tensor (2 channels: real + imag)
+            preprocessor = lambda x: np.stack([x.real, x.imag], axis=-1)
+            normalizer = lambda x: normalize(x, complex_input=True)
+        else:
+            preprocessor = lambda x: complex_magnitude(x).numpy()[..., np.newaxis]
+            normalizer = lambda x: normalize(x)
+
+        # TODO: Build complex loader for img
+
         def tf_gen_img():
             for k, x in ds:
-                img = complex_magnitude(x).numpy()
-                img = normalize(img)
-                # Add a channel
-                img = img[..., np.newaxis]
+                img = preprocessor(x)
+                img = normalizer(img)
                 yield img
 
         def tf_gen_ksp():
             for k, x in ds:
-                img = complex_magnitude(k).numpy()
-                img = normalize(img)
-                # Add a channel
-                img = img[..., np.newaxis]
-                # if mask_marginals:
-                #     img = build_and_apply_random_mask(img)
-                yield img
-
-        def tf_gen_ksp_cplx():
-            for k, x in ds:
-                # Treat kspace as a 3D tensor (2 channels: real + imag)
-                img = np.stack([k.real, k.imag], axis=-1)
-                img = normalize(img, complex_input=True)
-                # if mask_marginals:
-                #     img = build_and_apply_random_mask(img)
+                img = preprocessor(k)
+                img = normalizer(img)
                 yield img
 
         if "kspace" == category:
-            print("Training on image kspace...")
+            print(f"Training on {'complex' if complex_input else 'image'} kspace...")
             return tf_gen_ksp
 
-        if "kspace_complex" == category:
-            print("Training on complex kspace...")
-            return tf_gen_ksp_cplx
+        # if complex_input:
+        #     print("Training on complex kspace...")
+        #     return tf_gen_ksp_cplx
 
         # Default to target image as category
+        print(f"Training on {'complex' if complex_input else 'image'} mri...")
         return tf_gen_img
 
     train_ds = tf.data.Dataset.from_generator(
@@ -424,9 +400,13 @@ def mvtec_aug(x):
 
 @tf.function
 def knee_preproc(x):
-    shape = configs.dataconfig[configs.config_values.dataset]["shape"]
-    h, w, c = [int(x.strip()) for x in shape.split(",")]
-    x.set_shape((220, 160, 1))
+    img_sz = configs.dataconfig[configs.config_values.dataset]["image_size"]
+    down_sz = configs.dataconfig[configs.config_values.dataset]["downsample_size"]
+
+    orig_h, orig_w, orig_c = [int(x.strip()) for x in img_sz.split(",")]
+    x.set_shape((orig_h, orig_w, orig_c))
+
+    h, w, c = [int(x.strip()) for x in down_sz.split(",")]
     x = tf.image.resize(x, (h, w), method="lanczos5")
     print("Resized:", x.shape)
     return x
@@ -452,7 +432,9 @@ def np_build_and_apply_random_mask(x):
     # Building mask of random columns to **keep**
     batch_sz, img_h, img_w, c = x.shape
     rand_ratio = np.random.uniform(
-        low=0.0, high=configs.config_values.marginal_ratio, size=1
+        low=configs.config_values.min_marginal_ratio,
+        high=configs.config_values.marginal_ratio,
+        size=1,
     )
     n_mask_cols = int(rand_ratio * img_w)
     rand_cols = np.random.randint(img_w, size=n_mask_cols)

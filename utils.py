@@ -80,7 +80,8 @@ def find_k_closest(image, k, data_as_array):
 
 def get_dataset_image_size(dataset_name):
     return [
-        int(x.strip()) for x in configs.dataconfig[dataset_name]["shape"].split(",")
+        int(x.strip())
+        for x in configs.dataconfig[dataset_name]["image_size"].split(",")
     ]
 
 
@@ -273,7 +274,14 @@ def _build_parser():
         "--marginal_ratio",
         default=0.0,
         type=float,
-        help="ratio of marginals to mask out",
+        help="ratio of marginals to keep (randomly selected bewteen min_marginal_ratio and this value)",
+    )
+
+    parser.add_argument(
+        "--min_marginal_ratio",
+        default=0.0,
+        type=float,
+        help="min ratio of marginals to keep",
     )
 
     parser.add_argument(
@@ -341,9 +349,9 @@ def evaluate_print_model_summary(model, verbose=True):
     if configs.config_values.mask_marginals:
         input_shape[-1] += 1  # Append a mask channel
 
-    # TODO: This is very hacky, find better solution
-    if configs.config_values.class_label == "kspace_complex":
-        input_shape[-1] += 1  # kspace is 2 channels
+    # # TODO: This is very hacky, find better solution
+    # if configs.config_values.class_label == "kspace_complex":
+    #     input_shape[-1] += 1  # kspace is 2 channels
 
     print(input_shape)
     sigma_levels = get_sigma_levels()  # tf.linspace(0.0,1.0,3) #
