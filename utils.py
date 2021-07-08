@@ -159,7 +159,7 @@ def _build_parser():
     )
     parser.add_argument(
         "--learning_rate",
-        default=0.0001,
+        default=3e-4,
         type=float,
         help="learning rate for the optimizer",
     )
@@ -322,7 +322,8 @@ def get_savemodel_dir():
 
     ds_name = configs.config_values.dataset
     if configs.config_values.mask_marginals:
-        ds_name = f"{ds_name}_mr{configs.config_values.marginal_ratio}"
+        # ds_name = f"{ds_name}_mr{configs.config_values.marginal_ratio}"
+        ds_name = f"{ds_name}_mr{configs.config_values.min_marginal_ratio}-{configs.config_values.marginal_ratio}"
 
     # Folder name: model_name+filters+dataset+L
     complete_model_name = "{}{}_{}-{}_L{}_SH{:.0e}_SL{:.0e}".format(
@@ -644,7 +645,7 @@ def build_distributed_trainers(
                 # --> Noise may only be applied to foreground
                 x_batch, masks = tf.split(x_batch, (channels, 1), axis=-1)
                 perturbation = tf.random.normal(shape=x_batch.shape) * sigmas
-                # perturbation = tf.multiply(perturbation, masks)
+                perturbation = tf.multiply(perturbation, masks)
 
                 # Used for calculating loss
                 x_batch_perturbed = x_batch + perturbation

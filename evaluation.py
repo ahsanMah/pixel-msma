@@ -43,13 +43,15 @@ def compute_and_save_score_norms(model, dataset, score_cache_filename):
 
 def partial_observation_eval(model, complete_model_name):
     max_marginal_ratio = configs.config_values.marginal_ratio
+    min_marginal_ratio = configs.config_values.min_marginal_ratio
     dataset = configs.config_values.dataset
     score_cache_dir = os.path.join("score_cache", dataset, complete_model_name)
     os.makedirs(score_cache_dir, exist_ok=True)
 
-    for ratio in np.linspace(0.1, max_marginal_ratio, num=5):
+    for ratio in np.linspace(min_marginal_ratio, max_marginal_ratio, num=5):
         print(f"Evaluating for observation ratio {ratio}")
         configs.config_values.marginal_ratio = ratio
+        configs.config_values.min_marginal_ratio = ratio
         score_cache_filename = f"{score_cache_dir}/eval_mr{ratio}"
 
         if not os.path.exists(score_cache_filename):

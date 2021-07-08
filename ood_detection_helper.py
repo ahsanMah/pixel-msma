@@ -255,7 +255,7 @@ def train_flow(X_train, X_test, batch_size=128, epochs=1000, verbose=True):
     return distribution  # Return distribution optmizied via MLE
 
 
-def compute_scores(model, x_test):
+def compute_scores_ncsnv2(model, x_test):
 
     # Sigma Idx -> Score
     score_dict = []
@@ -277,6 +277,24 @@ def compute_scores(model, x_test):
         score_dict.append(tf.identity(_logits))
 
     return tf.stack(score_dict, axis=0)
+
+
+def compute_scores(model, xs):
+    scores = []
+    sigmas = utils.get_sigma_levels()
+    for x in tqdm(xs):
+        # x = tf.expand_dims(xs[i],0)
+        per_sigma_scores = []
+        for idx, sigma_val in enumerate(sigmas):
+            sigma = idx * tf.ones([x.shape[0]], dtype=tf.dtypes.int32)
+            score = model([x, sigma]) * sigma_val
+            # score = score ** 2
+            per_sigma_scores.append(score)
+        scores.append(tf.stack(per_sigma_scores, axis=1))
+
+    # N x WxH x L Matrix of score norms
+    scores = tf.squeeze(tf.concat(scores, axis=0))
+    return scores
 
 
 def compute_weighted_scores(model, x_test):
