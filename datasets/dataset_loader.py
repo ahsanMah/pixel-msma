@@ -44,12 +44,16 @@ BRAIN_LABELS = [
 # with open("./datasets/data_configs.yaml") as f:
 #     dataconfig = yaml.full_load(f)
 
+"""
+supervised: To load data for binary classification between inliers and outliers
+"""
 
-def load_data(dataset_name, include_ood=False):
+
+def load_data(dataset_name, include_ood=False, supervised=False):
     # load data from tfds
 
     if "knee" in dataset_name:
-        return load_knee_data(include_ood)
+        return load_knee_data(include_ood, supervised)
 
     if "mvtec" in dataset_name:
         base_path = configs.dataconfig[dataset_name]["datadir"]
@@ -122,7 +126,7 @@ def load_data(dataset_name, include_ood=False):
     return train, test
 
 
-def load_knee_data(include_ood=False):
+def load_knee_data(include_ood=False, supervised=False):
 
     category = configs.config_values.class_label
     complex_input = "complex" in configs.config_values.dataset
@@ -134,10 +138,11 @@ def load_knee_data(include_ood=False):
     max_marginal_ratio = configs.config_values.marginal_ratio
     mask_marginals = configs.config_values.mask_marginals
     datadir = configs.dataconfig["knee"][_key]
-    train_dataset = FastKnee(os.path.join(datadir, "singlecoil_train"))
-    val_dataset = FastKnee(os.path.join(datadir, "singlecoil_val"))
-
-    img_h, img_w, c = utils.get_dataset_image_size(configs.config_values.dataset)
+    train_dir = os.path.join(datadir, "singlecoil_train")
+    val_dir = os.path.join(datadir, "singlecoil_val")
+    test_dir = os.path.join(datadir, "singlecoil_test_v2")
+    img_sz = configs.dataconfig[configs.config_values.dataset]["image_size"]
+    img_h, img_w, c = [int(x.strip()) for x in img_sz.split(",")]
 
     def normalize(img, complex_input=False, quantile=0.999):
 
@@ -160,7 +165,7 @@ def load_knee_data(include_ood=False):
         )
         return img
 
-    def make_generator(ds):
+    def make_generator(ds, ood=False):
 
         if complex_input:
             # Treat input as a 3D tensor (2 channels: real + imag)
@@ -169,6 +174,8 @@ def load_knee_data(include_ood=False):
         else:
             preprocessor = lambda x: complex_magnitude(x).numpy()[..., np.newaxis]
             normalizer = lambda x: normalize(x)
+
+        label = 1 if ood else 0
 
         # TODO: Build complex loader for img
 
@@ -182,43 +189,65 @@ def load_knee_data(include_ood=False):
             for k, x in ds:
                 img = preprocessor(k)
                 img = normalizer(img)
-                yield img
+
+                if supervised:
+                    yield img, tf.one_hot(label, depth=2)
+                else:
+                    yield img
 
         if "kspace" == category:
             print(f"Training on {'complex' if complex_input else 'image'} kspace...")
             return tf_gen_ksp
 
-        # if complex_input:
-        #     print("Training on complex kspace...")
-        #     return tf_gen_ksp_cplx
-
         # Default to target image as category
         print(f"Training on {'complex' if complex_input else 'image'} mri...")
         return tf_gen_img
 
-    train_ds = tf.data.Dataset.from_generator(
-        make_generator(train_dataset),
-        tf.float32,
-        tf.TensorShape([img_h, img_w, c]),
-        # output_signature=(tf.TensorSpec(shape=(img_h, img_w, c), dtype=tf.float32)),
-    )
-    val_ds = tf.data.Dataset.from_generator(
-        make_generator(val_dataset),
-        tf.float32,
-        tf.TensorShape([img_h, img_w, c]),
-        # output_signature=(tf.TensorSpec(shape=(img_h, img_w, c), dtype=tf.float32)),
-    )
+    def build_ds(datadir, ood=False):
 
-    if include_ood:
-        test_dataset = FastKneeTumor(os.path.join(datadir, "singlecoil_test_v2"))
-        test_ds = tf.data.Dataset.from_generator(
-            make_generator(test_dataset),
-            tf.float32,
-            tf.TensorShape([img_h, img_w, c]),
+        if supervised:
+            output_type = (tf.float32, tf.int32)
+            output_shape = (
+                tf.TensorShape([img_h, img_w, c]),
+                tf.TensorShape(
+                    [
+                        2,
+                    ]
+                ),
+            )
+        else:
+            output_type = tf.float32
+            output_shape = tf.TensorShape([img_h, img_w, c])
+
+        dataset = FastKnee(datadir) if not ood else FastKneeTumor(datadir)
+        ds = tf.data.Dataset.from_generator(
+            make_generator(dataset, ood=ood),
+            output_type,
+            output_shape,
             # output_signature=(tf.TensorSpec(shape=(img_h, img_w, c), dtype=tf.float32)),
         )
 
+        return ds
+
+    train_ds = build_ds(train_dir)
+    val_ds = build_ds(val_dir)
+    test_ds = build_ds(test_dir)
+
+    if supervised:
+        ood_ds_train = build_ds(train_dir, ood=True)
+        ood_ds_val = build_ds(val_dir, ood=True)
+        ood_ds_test = build_ds(test_dir, ood=True)
+
+        train_ds = train_ds.concatenate(ood_ds_train)
+        val_ds = val_ds.concatenate(ood_ds_val)
+        test_ds = test_ds.concatenate(ood_ds_test)
+
         return train_ds, val_ds, test_ds
+
+    # The datsets used to train MSMA
+    if include_ood:
+        ood_ds = build_ds(test_dir, ood=True)
+        return val_ds, test_ds, ood_ds
 
     return train_ds, val_ds
 
@@ -399,16 +428,17 @@ def mvtec_aug(x):
 
 
 @tf.function
-def knee_preproc(x):
-    img_sz = configs.dataconfig[configs.config_values.dataset]["image_size"]
+def knee_preproc(x, l=None):
+    # img_sz = configs.dataconfig[configs.config_values.dataset]["image_size"]
     down_sz = configs.dataconfig[configs.config_values.dataset]["downsample_size"]
-
-    orig_h, orig_w, orig_c = [int(x.strip()) for x in img_sz.split(",")]
-    x.set_shape((orig_h, orig_w, orig_c))
 
     h, w, c = [int(x.strip()) for x in down_sz.split(",")]
     x = tf.image.resize(x, (h, w), method="lanczos5")
     print("Resized:", x.shape)
+
+    if l is not None:
+        return x, l
+
     return x
 
 
@@ -510,7 +540,7 @@ def preprocess(dataset_name, data, train=True):
         data = data.cache(fname)  # should be file for really large datasets
 
     if train:
-        data = data.shuffle(buffer_size=1000, reshuffle_each_iteration=False)
+        data = data.shuffle(buffer_size=10, reshuffle_each_iteration=False)
 
     if configs.config_values.dataset != "celeb_a":
         data = data.batch(configs.config_values.global_batch_size)

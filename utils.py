@@ -81,7 +81,7 @@ def find_k_closest(image, k, data_as_array):
 def get_dataset_image_size(dataset_name):
     return [
         int(x.strip())
-        for x in configs.dataconfig[dataset_name]["image_size"].split(",")
+        for x in configs.dataconfig[dataset_name]["downsample_size"].split(",")
     ]
 
 
@@ -659,6 +659,10 @@ def build_distributed_trainers(
 
             with tf.GradientTape() as t:
                 scores = model([x_batch_input, idx_sigmas])
+
+                if configs.config_values.y_cond:
+                    scores = scores * masks
+
                 current_loss = dsm_loss(scores, x_batch_perturbed, x_batch, sigmas)
 
                 if configs.config_values.mixed_precision:
@@ -714,6 +718,10 @@ def build_distributed_trainers(
                 x_batch_input = x_batch_perturbed
 
             scores = model([x_batch_input, idx_sigmas])
+
+            if configs.config_values.y_cond:
+                scores = scores * masks
+
             loss = dsm_loss(scores, x_batch_perturbed, x_batch, sigmas)
             return loss
 
