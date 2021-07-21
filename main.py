@@ -3,17 +3,19 @@ import os
 # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import tensorflow as tf
 import configs
+import utils
+
+os.environ["TF_GPU_THREAD_MODE"] = "gpu_private"
+utils.manage_gpu_memory_usage()
+
 import evaluation
 import generate
+import dgmm
 
 # import trainv2 as train
 import distributed_trainv2 as train
-import utils
 import json
 
-os.environ["TF_GPU_THREAD_MODE"] = "gpu_private"
-
-utils.manage_gpu_memory_usage()
 
 EXPERIMENTS = {"train": train.main, "eval": evaluation.main, "gen": generate.main}
 

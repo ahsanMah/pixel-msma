@@ -110,52 +110,53 @@ def _build_parser():
         description="CLI Options",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    parser.add_argument("--experiment", default="train", help="what experiment to run")
     parser.add_argument(
-        "--experiment", default="train", help="what experiment to run (default: train)"
+        "--mode",
+        default="score",
+        help="what mode to run the experiment in (applies to evaluation only)",
     )
-    parser.add_argument(
-        "--dataset", default="mnist", help="tfds name of dataset (default: 'mnist')"
-    )
+    parser.add_argument("--dataset", default="mnist", help="tfds name of dataset")
     parser.add_argument(
         "--model",
         default="refinenet",
-        help="Model to use. Can be 'refinenet', 'resnet', 'baseline' (default: refinenet)",
+        help="Model to use. Can be 'refinenet', 'resnet', 'baseline'",
     )
     parser.add_argument(
         "--filters",
         default=128,
         type=int,
-        help="number of filters in the model. (default: 128)",
+        help="number of filters in the model.",
     )
     parser.add_argument(
         "--num_L",
         default=10,
         type=int,
-        help="number of levels of noise to use (default: 10)",
+        help="number of levels of noise to use",
     )
     parser.add_argument(
         "--sigma_low",
         default=0.01,
         type=float,
-        help="lowest value for noise (default: 0.01)",
+        help="lowest value for noise",
     )
     parser.add_argument(
         "--sigma_high",
         default=1.0,
         type=float,
-        help="highest value for noise (default: 1.0)",
+        help="highest value for noise",
     )
     parser.add_argument(
         "--sigma_sequence",
         default="geometric",
         type=str,
-        help="can be 'geometric' or 'linear' (default: geometric)",
+        help="can be 'geometric' or 'linear'",
     )
     parser.add_argument(
         "--steps",
         default=200000,
         type=int,
-        help="number of steps to train the model for (default: 200000)",
+        help="number of steps to train the model for",
     )
     parser.add_argument(
         "--learning_rate",
@@ -163,13 +164,11 @@ def _build_parser():
         type=float,
         help="learning rate for the optimizer",
     )
-    parser.add_argument(
-        "--batch_size", default=128, type=int, help="batch size (default: 128)"
-    )
+    parser.add_argument("--batch_size", default=128, type=int, help="batch size")
     parser.add_argument(
         "--samples_dir",
         default="./samples/",
-        help="folder for saving samples (default: ./samples/)",
+        help="folder for saving samples",
     )
 
     parser.add_argument(

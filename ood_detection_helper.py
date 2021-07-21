@@ -1,5 +1,5 @@
 import utils, configs
-import argparse
+import argparse, logging
 import seaborn as sns
 import pandas as pd
 import numpy as np
@@ -279,11 +279,11 @@ def compute_scores_ncsnv2(model, x_test):
     return tf.stack(score_dict, axis=0)
 
 
-def compute_scores(model, xs):
+# FIXME Make this into a tf function for a batch using tiling
+def compute_scores(model, xs, masked_input=False):
     scores = []
     sigmas = utils.get_sigma_levels()
     for x in tqdm(xs):
-        # x = tf.expand_dims(xs[i],0)
         per_sigma_scores = []
         for idx, sigma_val in enumerate(sigmas):
             sigma = idx * tf.ones([x.shape[0]], dtype=tf.dtypes.int32)
@@ -297,11 +297,14 @@ def compute_scores(model, xs):
     return scores
 
 
-def compute_weighted_scores(model, x_test):
+# TOD0: Save intermediate score tensors to a file
+def compute_batched_score_norms(model, x_test, masked_input=False):
     # Sigma Idx -> Score
     score_dict = []
+    masks_arr = []
     sigmas = utils.get_sigma_levels()
-    final_logits = 0  # tf.zeros(logits_shape)
+    input_shape = utils.get_dataset_image_size(configs.config_values.dataset)
+    channels = input_shape[-1]
     progress_bar = tqdm(sigmas)
     for idx, sigma in enumerate(progress_bar):
 
@@ -310,13 +313,23 @@ def compute_weighted_scores(model, x_test):
         for x_batch in x_test:
             idx_sigmas = tf.ones(x_batch.shape[0], dtype=tf.int32) * idx
             score = model([x_batch, idx_sigmas]) * sigma
+
+            if masked_input:
+                _, masks = tf.split(x_batch, (channels, 1), axis=-1)
+                score = score * masks
+
             score = reduce_norm(score)
             _logits.append(score)
         score_dict.append(tf.identity(tf.concat(_logits, axis=0)))
 
     # N x L Matrix of score norms
     scores = tf.squeeze(tf.stack(score_dict, axis=1))
-    return scores
+
+    # if masked_input:
+    #     masks_arr = np.concatenate(masks_arr, axis=0)
+    #     return dict(scores=scores.numpy(), masks=masks_arr)
+
+    return scores.numpy()
 
 
 # def compute_weighted_scores(model, x_test):
