@@ -163,6 +163,11 @@ def load_knee_data(include_ood=False, supervised=False):
             0.0,
             1.0,
         )
+
+        # Rescale to [-1, 1] for ResNets
+        if supervised:
+            img = (img * 2) - 1
+
         return img
 
     def make_generator(ds, ood=False):
@@ -209,17 +214,13 @@ def load_knee_data(include_ood=False, supervised=False):
             output_type = (tf.float32, tf.int32)
             output_shape = (
                 tf.TensorShape([img_h, img_w, c]),
-                tf.TensorShape(
-                    [
-                        2,
-                    ]
-                ),
+                tf.TensorShape([2]),
             )
         else:
             output_type = tf.float32
             output_shape = tf.TensorShape([img_h, img_w, c])
 
-        dataset = FastKnee(datadir) if not ood else FastKneeTumor(datadir)
+        dataset = FastKneeTumor(datadir) if ood else FastKnee(datadir)
         ds = tf.data.Dataset.from_generator(
             make_generator(dataset, ood=ood),
             output_type,
@@ -229,25 +230,27 @@ def load_knee_data(include_ood=False, supervised=False):
 
         return ds
 
+    test_slices = 2000
     train_ds = build_ds(train_dir)
-    val_ds = build_ds(val_dir)
-    test_ds = build_ds(test_dir)
+    val_ds = build_ds(val_dir).skip(test_slices)
+    test_ds = build_ds(val_dir).take(test_slices)
 
     if supervised:
         ood_ds_train = build_ds(train_dir, ood=True)
-        ood_ds_val = build_ds(val_dir, ood=True)
-        ood_ds_test = build_ds(test_dir, ood=True)
+        ood_ds_val = build_ds(val_dir, ood=True).skip(test_slices)
+        ood_ds_test = build_ds(val_dir, ood=True).take(test_slices)
 
-        train_ds = train_ds.concatenate(ood_ds_train)
-        val_ds = val_ds.concatenate(ood_ds_val)
+        train_ds = tf.data.experimental.sample_from_datasets([train_ds, ood_ds_train])
+        val_ds = tf.data.experimental.sample_from_datasets([val_ds, ood_ds_val])
         test_ds = test_ds.concatenate(ood_ds_test)
 
         return train_ds, val_ds, test_ds
 
     # The datsets used to train MSMA
     if include_ood:
-        ood_ds = build_ds(test_dir, ood=True)
-        return val_ds, test_ds, ood_ds
+        ood_ds = build_ds(val_dir, ood=True).take(test_slices)
+        train_ds = train_ds.concatenate(val_ds)
+        return train_ds, test_ds, ood_ds
 
     return train_ds, val_ds
 
@@ -540,7 +543,7 @@ def preprocess(dataset_name, data, train=True):
         data = data.cache(fname)  # should be file for really large datasets
 
     if train:
-        data = data.shuffle(buffer_size=10, reshuffle_each_iteration=False)
+        data = data.shuffle(buffer_size=100, reshuffle_each_iteration=True)
 
     if configs.config_values.dataset != "celeb_a":
         data = data.batch(configs.config_values.global_batch_size)
@@ -549,7 +552,16 @@ def preprocess(dataset_name, data, train=True):
         _fn = lambda x: tf.numpy_function(
             func=np_build_and_apply_random_mask, inp=[x], Tout=tf.float32
         )
-        data = data.map(_fn, num_parallel_calls=AUTOTUNE)
+
+        def mask_fn(x, l=None):
+            x = _fn(x)
+
+            if l is not None:
+                return x, l
+
+            return x
+
+        data = data.map(mask_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
 
     if train and dataset_name in aug_map:
         data = data.map(aug_map[dataset_name], num_parallel_calls=2)
