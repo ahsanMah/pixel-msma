@@ -196,6 +196,12 @@ if __name__ == "__main__":
         help="whetehr to use imagenet pretrianing",
     )
 
+    parser.add_argument(
+        "--longleaf",
+        action="store_true",
+        help="whether model is running on longleaf server",
+    )
+
     args = parser.parse_args()
     print(args)
 
@@ -215,6 +221,7 @@ if __name__ == "__main__":
             "--batch_size=" + str(batch_size),
             "--marginal_ratio=" + str(marginal_ratio),
             "--min_marginal_ratio=" + str(marginal_ratio),
+            "--longleaf" if args.longleaf else "",
         ]
     )
     configs.config_values = config_args
