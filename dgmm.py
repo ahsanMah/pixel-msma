@@ -21,6 +21,8 @@ tf.data.AUTOTUNE = tf.data.experimental.AUTOTUNE
 
 EPSILON = 1e-5
 
+loss_tracker = tf.keras.metrics.Mean(name="loss")
+
 
 class DGMM(tf.keras.Model):
     """
@@ -48,38 +50,54 @@ class DGMM(tf.keras.Model):
             alpha=1.0,
             include_top=False,
             weights=None,
-            pooling="avg"
+            pooling="avg",
         )
 
-        self.hidden = tfk.Sequential([
-            tfk.layers.InputLayer(input_shape=img_shape),
-            tfk.layers.Conv2D(filters=3, kernel_size=1),
-            self.resnet
-        ], name="latent")
+        self.hidden = tfk.Sequential(
+            [
+                tfk.layers.InputLayer(input_shape=img_shape),
+                tfk.layers.Conv2D(filters=3, kernel_size=1),
+                self.resnet,
+            ],
+            name="latent",
+        )
 
-        self.alpha = tfk.Sequential([
-            self.hidden,
-            Dense(k_mixt, activation=None,
-                  kernel_initializer="he_uniform"),
-            tfk.layers.Activation('linear', dtype='float32')
-        ], name="alpha")
+        self.alpha = tfk.Sequential(
+            [
+                self.hidden,
+                Dense(k_mixt, activation=None, kernel_initializer="he_uniform"),
+                tfk.layers.Activation("linear", dtype="float32"),
+            ],
+            name="alpha",
+        )
 
-        self.mu = tfk.Sequential([
-            self.hidden,
-            Dense(k_mixt * D, activation=None, name="mu",
-                  kernel_initializer="he_uniform"),
-            Reshape((k_mixt, D), dtype='float32')
-        ], name="mu")
+        self.mu = tfk.Sequential(
+            [
+                self.hidden,
+                Dense(
+                    k_mixt * D,
+                    activation=None,
+                    name="mu",
+                    kernel_initializer="he_uniform",
+                ),
+                Reshape((k_mixt, D), dtype="float32"),
+            ],
+            name="mu",
+        )
 
-        self.sigma = tfk.Sequential([
-            self.hidden,
-            Dense(k_mixt * (D * (D+1) // 2),
-                  activation=tf.nn.softplus
-                  # kernel_regularizer=tfk.regularizers.l2(0.001)
-                  ),
-            Reshape((k_mixt, (D * (D+1)) // 2)),
-            tfk.layers.Lambda(self.stable_lower_triangle, dtype='float32')
-        ], name='sigma')
+        self.sigma = tfk.Sequential(
+            [
+                self.hidden,
+                Dense(
+                    k_mixt * (D * (D + 1) // 2),
+                    activation=tf.nn.softplus
+                    # kernel_regularizer=tfk.regularizers.l2(0.001)
+                ),
+                Reshape((k_mixt, (D * (D + 1)) // 2)),
+                tfk.layers.Lambda(self.stable_lower_triangle, dtype="float32"),
+            ],
+            name="sigma",
+        )
 
     @tf.function(experimental_compile=True)
     def stable_lower_triangle(self, x):
@@ -89,17 +107,14 @@ class DGMM(tf.keras.Model):
     def log_pdf_univariate(self, x, y):
 
         gmm = tfd.MixtureSameFamily(
-            mixture_distribution=tfd.Categorical(
-                logits=self.alpha(y)),
-            components_distribution=tfd.Normal(
-                loc=self.mu(y),
-                scale=self.sigma(y))
+            mixture_distribution=tfd.Categorical(logits=self.alpha(y)),
+            components_distribution=tfd.Normal(loc=self.mu(y), scale=self.sigma(y)),
         )
 
         return gmm.log_prob(tf.reshape(x, (-1,)))
 
     @tf.function(experimental_compile=True)
-    def log_loss(_, log_prob):
+    def log_loss(self, _, log_prob):
         return -tf.reduce_mean(log_prob)
 
     @tf.function(experimental_compile=True)
@@ -108,11 +123,10 @@ class DGMM(tf.keras.Model):
         # sigma = tfp.math.fill_triangular(self.sigma(y)) + 1e-5
         # print(sigma.dtype)
         gmm = tfd.MixtureSameFamily(
-            mixture_distribution=tfd.Categorical(
-                logits=self.alpha(y)),
+            mixture_distribution=tfd.Categorical(logits=self.alpha(y)),
             components_distribution=tfd.MultivariateNormalTriL(
-                loc=self.mu(y),
-                scale_tril=self.sigma(y))
+                loc=self.mu(y), scale_tril=self.sigma(y)
+            ),
         )
         return gmm.log_prob(x)
 
@@ -120,9 +134,69 @@ class DGMM(tf.keras.Model):
     def call(self, inputs):
         score, image = inputs
         # print(x.dtype, y.dtype)
-        log_prob = self.log_pdf(tf.cast(score, dtype=tf.float32),
-                                tf.cast(image, dtype=tf.float32))
+        log_prob = self.log_pdf(
+            tf.cast(score, dtype=tf.float32), tf.cast(image, dtype=tf.float32)
+        )
         return log_prob
+
+    # @tf.function(experimental_compile=True)
+    # def call(self, score, image):
+    #     log_prob = self.log_pdf(
+    #         tf.cast(score, dtype=tf.float32), tf.cast(image, dtype=tf.float32)
+    #     )
+    #     return log_prob
+
+    @property
+    def metrics(self):
+        # We list our `Metric` objects here so that `reset_states()` can be
+        # called automatically at the start of each epoch
+        # or at the start of `evaluate()`.
+        # If you don't implement this property, you have to call
+        # `reset_states()` yourself at the time of your choosing.
+        return [loss_tracker]
+
+    def train_step(self, data):
+        # Unpack the data. Its structure depends on your model and
+        # on what you pass to `fit()`.
+        score, image, ll_target = data
+        # ll_target = tf.zeros(score.shape[0])
+
+        with tf.GradientTape() as tape:
+            # Forward pass
+            log_prob = self.log_pdf(
+                tf.cast(score, dtype=tf.float32), tf.cast(image, dtype=tf.float32)
+            )
+            # Compute the loss value
+            loss = -tf.reduce_mean(log_prob)
+
+        # Compute gradients
+        trainable_vars = self.trainable_variables
+        gradients = tape.gradient(loss, trainable_vars)
+
+        # Update weights
+        self.optimizer.apply_gradients(zip(gradients, trainable_vars))
+
+        # Compute our own metrics
+        loss_tracker.update_state(loss)
+
+        return {"loss": loss_tracker.result()}
+
+    def test_step(self, data):
+        # Unpack the data
+        score, image, ll_target = data
+        # Compute predictions
+        y_probs = self.log_pdf(
+            tf.cast(score, dtype=tf.float32), tf.cast(image, dtype=tf.float32)
+        )
+
+        # Updates the metrics tracking the loss
+        loss = self.log_loss(ll_target, y_probs)
+
+        # Update the metrics.
+        loss_tracker.update_state(loss)
+
+        return {"loss": loss_tracker.result()}
+
 
 # @tf.function(experimental_compile=True)
 # def log_loss(model, x, y):
@@ -167,20 +241,19 @@ def get_overlap_map(img_sz, r_sz, anchors):
     counts = np.zeros(shape=(img_sz, img_sz))
 
     for x, y in anchors:
-        counts[x-r_sz//2: x+r_sz//2,
-               y-r_sz//2: y+r_sz//2] += 1
+        counts[x - r_sz // 2 : x + r_sz // 2, y - r_sz // 2 : y + r_sz // 2] += 1
 
     return counts
 
 
-def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10,
-                      receptive_field_sz=4, stride=None):
+def get_patch_loaders(
+    img_w, img_h, nc=3, sigma_l=10, receptive_field_sz=4, stride=None
+):
 
     # List of anchors denoting midpoint of patches
-    ANCHORS = tf.constant(build_anchors(
-        img_w, img_h, receptive_field_sz, stride))
+    ANCHORS = tf.constant(build_anchors(img_w, img_h, receptive_field_sz, stride))
     overlap_counts = get_overlap_map(img_w, receptive_field_sz, ANCHORS)
-    rsz_choices = tf.range(receptive_field_sz//8, receptive_field_sz+1, 2)
+    rsz_choices = tf.range(receptive_field_sz // 8, receptive_field_sz + 1, 2)
     print("Anchors:", ANCHORS.shape)
     print("Receptive Field choices:", rsz_choices.shape[0])
 
@@ -225,19 +298,22 @@ def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10,
         x = tf.repeat(x_batch["image"], ANCHORS.shape[0], axis=0)
         print("Repeated Batch shape:", x.shape)
 
-        x = tfa.image.cutout(x, mask_size=(receptive_field_sz, receptive_field_sz),
-                             offset=offsets, constant_values=0.0)
+        x = tfa.image.cutout(
+            x,
+            mask_size=(receptive_field_sz, receptive_field_sz),
+            offset=offsets,
+            constant_values=0.0,
+        )
 
         # Generate mask for cut pixels
         mask = x[..., 0] == 0
 
         # Get norms of just the patches
-        x_patch = tf.where(
-            mask[..., tf.newaxis, tf.newaxis], s, tf.zeros_like(s))
+        x_patch = tf.where(mask[..., tf.newaxis, tf.newaxis], s, tf.zeros_like(s))
         print("Patch:", x_patch.shape)
         # x_patch = tf.reshape(x_patch, shape=[-1, receptive_field_sz*receptive_field_sz*nc, sigma_l])
         # x_patch = tf.reshape(x_patch, shape=[x_patch.shape[0], -1, sigma_l])
-        x_patch = tf.reshape(x_patch, shape=[-1, img_w*img_h*nc, sigma_l])
+        x_patch = tf.reshape(x_patch, shape=[-1, img_w * img_h * nc, sigma_l])
 
         print("Flat Patch:", x_patch.shape)
         score = tf.norm(x_patch, axis=1, ord="euclidean")
@@ -255,23 +331,20 @@ def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10,
     def get_random_patches(s, x, y):
         x = x + EPSILON
         # Choosing random patch sizes
-        idx = tf.random.uniform(
-            (1,), 0, rsz_choices.shape[0], dtype=tf.dtypes.int32)
+        idx = tf.random.uniform((1,), 0, rsz_choices.shape[0], dtype=tf.dtypes.int32)
         rsz = tf.gather(rsz_choices, idx)
 
         mask_sz = tf.repeat(rsz, 2)
-        x = tfa.image.random_cutout(x, mask_size=mask_sz,
-                                    constant_values=0.0)
+        x = tfa.image.random_cutout(x, mask_size=mask_sz, constant_values=0.0)
 
         # Generate mask for cut pixels
         mask = x[..., 0] == 0
         # mask = tf.expand_dims(mask, axis=-1)
 
         # Get score-norms of just the patches
-        x_patch = tf.where(
-            mask[..., tf.newaxis, tf.newaxis], s, tf.zeros_like(s))
+        x_patch = tf.where(mask[..., tf.newaxis, tf.newaxis], s, tf.zeros_like(s))
         print(x_patch.shape)
-        x_patch = tf.reshape(x_patch, shape=[-1, img_w*img_h*3, sigma_l])
+        x_patch = tf.reshape(x_patch, shape=[-1, img_w * img_h * 3, sigma_l])
         print(x_patch.shape)
         score = tf.norm(x_patch, axis=1, ord="euclidean")
 
@@ -285,8 +358,7 @@ def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10,
 
     def build_test_ds(x, s, batch_sz):
         s = tf.transpose(s, perm=[0, 2, 3, 4, 1])
-        ds = {"image": tf.cast(x, tf.float32),
-              "score": tf.cast(s, tf.float32)}
+        ds = {"image": tf.cast(x, tf.float32), "score": tf.cast(s, tf.float32)}
         ds = tf.data.Dataset.from_tensor_slices(ds)
         ds = ds.batch(batch_sz, drop_remainder=False)
         ds = ds.map(get_test_patches, num_parallel_calls=tf.data.AUTOTUNE)
@@ -297,9 +369,7 @@ def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10,
 
     def build_train_ds(x, s, batch_sz):
         s = tf.transpose(s, perm=[0, 2, 3, 4, 1])
-        ll_target = tf.data.Dataset.from_tensor_slices(
-            tf.zeros(shape=(s.shape[0], 1))
-        )
+        ll_target = tf.data.Dataset.from_tensor_slices(tf.zeros(shape=(s.shape[0], 1)))
         x = tf.data.Dataset.from_tensor_slices(x)
         s = tf.data.Dataset.from_tensor_slices(s)
         ds = tf.data.Dataset.zip((s, x, ll_target)).cache()
@@ -314,13 +384,12 @@ def get_patch_loaders(img_w, img_h, nc=3, sigma_l=10,
     return build_train_ds, build_test_ds, overlap_counts
 
 
-'''
+"""
 Starts a fresh round of training for `n_epochs`
-'''
+"""
 
 
-def trainer(model, optimizer, train_ds, val_ds, dataset,
-            r_sz, n_samples, n_epochs=20):
+def trainer(model, optimizer, train_ds, val_ds, dataset, r_sz, n_samples, n_epochs=20):
 
     start_time = datetime.now().strftime("%y%m%d-%H%M%S")
     callbacks = [
@@ -345,23 +414,20 @@ def trainer(model, optimizer, train_ds, val_ds, dataset,
             monitor="val_loss",
             verbose=1,
         ),
-
         tf.keras.callbacks.ReduceLROnPlateau(
-            monitor='val_loss', factor=0.2, min_delta=1e-3,
-            patience=2, min_lr=1e-5
+            monitor="val_loss", factor=0.2, min_delta=1e-3, patience=2, min_lr=1e-5
         ),
-
         tf.keras.callbacks.TensorBoard(
-            f'./logs/dgmm/{dataset}/{r_sz}x{r_sz}_{start_time}', update_freq=1
-        )
-
+            f"./logs/dgmm/{dataset}/{r_sz}x{r_sz}_{start_time}", update_freq=1
+        ),
     ]
 
     model.compile(optimizer=optimizer, loss=DGMM.log_loss)
     # model.load_weights("saved_models/dgmm_init")
 
-    history = model.fit(train_ds, validation_data=val_ds,
-                        epochs=n_epochs, callbacks=callbacks)
+    history = model.fit(
+        train_ds, validation_data=val_ds, epochs=n_epochs, callbacks=callbacks
+    )
 
     # val_ds = test_ds.take(8).cache()
 
