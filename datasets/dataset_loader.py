@@ -461,6 +461,7 @@ def knee_aug(x):
     return x
 
 
+# TODO: Use a global list of cols that shuffles every iteration
 def np_build_and_apply_random_mask(x):
     # Building mask of random columns to **keep**
     batch_sz, img_h, img_w, c = x.shape
@@ -470,11 +471,19 @@ def np_build_and_apply_random_mask(x):
         size=1,
     )
     n_mask_cols = int(rand_ratio * img_w)
-    rand_cols = np.random.randint(img_w, size=n_mask_cols)
 
     # We do *not* want to mask out the middle (low) frequencies
     # Keeping 10% of low freq is equivalent to Scenario-30L in activemri paper
-    low_freq_cols = np.arange(int(0.45 * img_w), img_w - int(0.45 * img_w))
+    low_freq_start = int(0.45 * img_w)
+    low_freq_end = img_w - int(0.45 * img_w)
+    low_freq_cols = np.arange(low_freq_start, low_freq_end)
+
+    high_freq_cols = np.concatenate(
+        (np.arange(0, low_freq_start), np.arange(low_freq_end, img_w))
+    )
+    np.random.shuffle(high_freq_cols)
+    rand_cols = high_freq_cols[:n_mask_cols]
+
     mask = np.zeros((batch_sz, img_h, img_w, 1), dtype=np.float32)
     mask[:, :, rand_cols, :] = 1.0
     mask[:, :, low_freq_cols, :] = 1.0
@@ -545,9 +554,7 @@ def preprocess(dataset_name, data, train=True):
     if train:
         data = data.shuffle(buffer_size=100, reshuffle_each_iteration=True)
 
-    if configs.config_values.dataset != "celeb_a":
-        data = data.batch(configs.config_values.global_batch_size)
-
+    # reordered batching and masking
     if configs.config_values.mask_marginals:
         _fn = lambda x: tf.numpy_function(
             func=np_build_and_apply_random_mask, inp=[x], Tout=tf.float32
@@ -562,6 +569,9 @@ def preprocess(dataset_name, data, train=True):
             return x
 
         data = data.map(mask_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+
+    if configs.config_values.dataset != "celeb_a":
+        data = data.batch(configs.config_values.global_batch_size)
 
     if train and dataset_name in aug_map:
         data = data.map(aug_map[dataset_name], num_parallel_calls=2)
