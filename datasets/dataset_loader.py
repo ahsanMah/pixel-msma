@@ -461,16 +461,11 @@ def knee_aug(x):
     return x
 
 
-# TODO: Use a global list of cols that shuffles every iteration
-def np_build_and_apply_random_mask(x):
+def np_build_mask_fn():
     # Building mask of random columns to **keep**
-    batch_sz, img_h, img_w, c = x.shape
-    rand_ratio = np.random.uniform(
-        low=configs.config_values.min_marginal_ratio,
-        high=configs.config_values.marginal_ratio,
-        size=1,
-    )
-    n_mask_cols = int(rand_ratio * img_w)
+    # batch_sz, img_h, img_w, c = x.shape
+    img_sz = configs.dataconfig[configs.config_values.dataset]["downsample_size"]
+    img_h, img_w, c = [int(x.strip()) for x in img_sz.split(",")]
 
     # We do *not* want to mask out the middle (low) frequencies
     # Keeping 10% of low freq is equivalent to Scenario-30L in activemri paper
@@ -481,17 +476,27 @@ def np_build_and_apply_random_mask(x):
     high_freq_cols = np.concatenate(
         (np.arange(0, low_freq_start), np.arange(low_freq_end, img_w))
     )
-    np.random.shuffle(high_freq_cols)
-    rand_cols = high_freq_cols[:n_mask_cols]
 
-    mask = np.zeros((batch_sz, img_h, img_w, 1), dtype=np.float32)
-    mask[:, :, rand_cols, :] = 1.0
-    mask[:, :, low_freq_cols, :] = 1.0
+    def apply_random_mask(x):
+        np.random.shuffle(high_freq_cols)
+        rand_ratio = np.random.uniform(
+            low=configs.config_values.min_marginal_ratio,
+            high=configs.config_values.marginal_ratio,
+            size=1,
+        )
+        n_mask_cols = int(rand_ratio * img_w)
+        rand_cols = high_freq_cols[:n_mask_cols]
 
-    # Applying + Appending mask
-    x = x * mask
-    x = np.concatenate([x, mask], axis=-1)
-    return x
+        mask = np.zeros((img_h, img_w, 1), dtype=np.float32)
+        mask[:, rand_cols, :] = 1.0
+        mask[:, low_freq_cols, :] = 1.0
+
+        # Applying + Appending mask
+        x = x * mask
+        x = np.concatenate([x, mask], axis=-1)
+        return x
+
+    return apply_random_mask
 
 
 def map_decorator(func):
@@ -557,7 +562,7 @@ def preprocess(dataset_name, data, train=True):
     # reordered batching and masking
     if configs.config_values.mask_marginals:
         _fn = lambda x: tf.numpy_function(
-            func=np_build_and_apply_random_mask, inp=[x], Tout=tf.float32
+            func=np_build_mask_fn(), inp=[x], Tout=tf.float32
         )
 
         def mask_fn(x, l=None):
