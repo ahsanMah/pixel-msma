@@ -97,8 +97,8 @@ def check_args_validity(args):
     if args.max_to_keep == -1:
         args.max_to_keep = None
 
-    args.mask_marginals = args.marginal_ratio > 0.0
-    args.y_cond = args.marginal_ratio > 0.0
+    args.mask_marginals = args.marginal_ratio >= 0.0
+    args.y_cond = args.marginal_ratio >= 0.0
 
     args.split = args.split.split(",")
     args.split = list(map(lambda x: x.strip(), args.split))
@@ -271,7 +271,7 @@ def _build_parser():
 
     parser.add_argument(
         "--marginal_ratio",
-        default=0.0,
+        default=-1.0,
         type=float,
         help="ratio of marginals to keep (randomly selected bewteen min_marginal_ratio and this value)",
     )
