@@ -41,7 +41,11 @@ def build_model(dataset, pretrained=False):
         input_shape[-1] += 1  # Append a mask channel
 
     base_model = tf.keras.applications.resnet_v2.ResNet50V2(
-        input_shape=(input_shape[0], input_shape[1], 3) if pretrained else input_shape,
+        input_shape=(
+            input_shape[0],
+            input_shape[1],
+            3,
+        ),  # if pretrained else input_shape,
         include_top=False if pretrained else True,
         weights="imagenet" if pretrained else None,
         classes=None if pretrained else 2,
@@ -59,12 +63,18 @@ def build_model(dataset, pretrained=False):
             ]
         )
     else:
-        model = base_model
+        model = tf.keras.Sequential(
+            [
+                tf.keras.Input(shape=input_shape),
+                tf.keras.layers.Conv2D(3, 1),  # 1x1 conv to increase channels
+                base_model,
+            ]
+        )
 
     logging.info(model.summary())
 
     bce = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
-    optimizer = tf.keras.optimizers.Adamax(learning_rate=3e-4)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=3e-5)
     # optimizer = tf.keras.optimizers.SGD(learning_rate=0.01, momentum=0.9, nesterov=True)
 
     model.compile(
@@ -79,6 +89,7 @@ def build_model(dataset, pretrained=False):
 def build_and_train(dataset, n_epochs=25, pretrained=False):
 
     start_time = datetime.now().strftime("%y%m%d-%H%M%S")
+    input_shape = utils.get_dataset_image_size(dataset)
     callbacks = [
         tf.keras.callbacks.EarlyStopping(
             # Stop training when `val_loss` is no longer improving
@@ -106,14 +117,24 @@ def build_and_train(dataset, n_epochs=25, pretrained=False):
         ),
     ]
 
+    @tf.function
+    def remove_mask(x, l):
+        x, _ = tf.split(x, (input_shape[-1] - 1, 1), axis=-1)
+        return x, l
+
     model = build_model(dataset, pretrained)
     train_ds, val_ds, test_ds = load_data(dataset, include_ood=False, supervised=True)
 
     train_ds = preprocess("knee", train_ds, train=True)
+    # train_ds.map(remove_mask, num_parallel_calls=AUTOTUNE)
     train_ds = train_ds.prefetch(buffer_size=AUTOTUNE)
+
     val_ds = preprocess("knee", val_ds, train=True)
+    # val_ds.map(remove_mask, num_parallel_calls=AUTOTUNE)
     val_ds = val_ds.prefetch(buffer_size=AUTOTUNE)
+
     test_ds = preprocess("knee", test_ds, train=False)
+    # test_ds.map(remove_mask, num_parallel_calls=AUTOTUNE)
     test_ds = test_ds.prefetch(buffer_size=AUTOTUNE)
 
     history = model.fit(
@@ -136,8 +157,68 @@ def build_and_train(dataset, n_epochs=25, pretrained=False):
         inlier_test_scores, outlier_test_scores, verbose=True, plot=True
     )
     logging.info(metrics)
+    np.savez_compressed(score_cache_filename, **gmm_lls)
 
     return history
+
+
+def load_and_eval(dataset, random=True):
+
+    metrics_dir = os.path.join(
+        MODELDIR, "metrics", "random_masks" if random else "fixed_masks"
+    )
+    os.makedirs(metrics_dir, exist_ok=True)
+
+    logfile = os.path.join(metrics_dir, "eval.log")
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+
+    # # create formatter and add it to the handlers
+    formatter = logging.Formatter("EVAL: %(message)s")
+
+    # create file handler which logs even debug messages
+    fh = logging.FileHandler(logfile, mode="w")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+
+    logger.info("====== Evaluation on Test Set ======")
+    model = build_model(dataset, pretrained)
+    load_last_checkpoint(model, MODELDIR)
+
+    train_ds, val_ds, test_ds = load_data(dataset, include_ood=False, supervised=True)
+    n_iters = 100
+
+    ## Multiple runs of random masks
+    for i in range(n_iters):
+        print(f"==== RUN #{i} ====")
+        tf.random.set_seed(42 + i)
+        np.random.seed(42 + i)
+
+        _test_ds = preprocess("knee", test_ds, train=False)
+        _test_ds = _test_ds.prefetch(buffer_size=AUTOTUNE)
+
+        test_preds = model.predict(_test_ds)
+        test_labels = np.concatenate(
+            [np.argmax(l, axis=1) for _, l in _test_ds], axis=0
+        )
+
+        test_scores = test_preds[:, 1]
+        inlier_test_scores = test_scores[test_labels == 0]
+        outlier_test_scores = test_scores[test_labels == 1]
+
+        metrics = ood_metrics(
+            inlier_test_scores, outlier_test_scores, verbose=False, plot=False
+        )
+        logger.info(metrics)
+
+        np.savez_compressed(
+            f"{metrics_dir}/eval_{i}",
+            inlier=inlier_test_scores,
+            ood=outlier_test_scores,
+        )
+
+    return
 
 
 def load_last_checkpoint(model, savedir):
@@ -191,7 +272,6 @@ if __name__ == "__main__":
 
     parser.add_argument(
         "--pretrained",
-        default=0.0,
         action="store_true",
         help="whetehr to use imagenet pretrianing",
     )
@@ -203,7 +283,7 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    print(args)
+    # print(args)
 
     dataset = args.dataset
     category = args.category
@@ -221,7 +301,7 @@ if __name__ == "__main__":
             "--batch_size=" + str(batch_size),
             "--marginal_ratio=" + str(marginal_ratio),
             "--min_marginal_ratio=" + str(marginal_ratio),
-            "--longleaf" if args.longleaf else "",
+            # "--longleaf" if args.longleaf else "",
         ]
     )
     configs.config_values = config_args
@@ -234,7 +314,16 @@ if __name__ == "__main__":
     MODELDIR = os.path.join(model_path, dirname, dataset, f"{marginal_ratio}")
     os.makedirs(MODELDIR, exist_ok=True)
 
-    logfile = os.path.join(MODELDIR, "run.log")
-    logging.basicConfig(filename=logfile, filemode="w", level=logging.DEBUG)
+    if args.experiment == "train":
+        logfile = os.path.join(MODELDIR, "run.log")
+        logging.basicConfig(filename=logfile, filemode="w", level=logging.DEBUG)
+        build_and_train(dataset, epochs, pretrained=pretrained)
 
-    build_and_train(dataset, epochs, pretrained=pretrained)
+    if args.experiment == "eval":
+
+        for ratio in [0.8]:
+            configs.config_values.marginal_ratio = ratio
+            configs.config_values.min_marginal_ratio = ratio
+            MODELDIR = os.path.join(model_path, dirname, dataset, f"{ratio}")
+            os.makedirs(MODELDIR, exist_ok=True)
+            load_and_eval(dataset)
