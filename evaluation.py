@@ -16,10 +16,13 @@ import configs
 import utils
 from datasets.dataset_loader import load_data, preprocess
 from ood_detection_helper import compute_batched_score_norms
+from classifier import load_last_checkpoint
 from dgmm import DGMM
 
 
 def compute_and_save_score_norms(model, dataset, score_cache_filename):
+
+    os.makedirs(score_cache_filename, exist_ok=True)
 
     # load dataset from tfds with test/ood data
     train, val, test = load_data(dataset, include_ood=True, supervised=False)
@@ -29,31 +32,57 @@ def compute_and_save_score_norms(model, dataset, score_cache_filename):
 
     # Create a dictionary of score results
     datasets = {
-        "train": train,  # validation set used in training
-        "val": val,
-        "ood": test,
+        "val": preprocess(dataset, val, train=False).prefetch(AUTOTUNE),
+        "ood": preprocess(dataset, test, train=False).prefetch(AUTOTUNE),
     }
+
+    train_scores = {}
+
+    ds = preprocess(dataset, train, train=False).take(10)
+    ds = ds.cache()  # Use same masks for all sigmas
+    ds = ds.prefetch(AUTOTUNE)
+
+    train_scores["scores"] = compute_batched_score_norms(model, ds, masked_input=True)
+
+    # Record masks used for scores
+    masks = []
+    for x in ds:
+        _, m = tf.split(x, (channels, 1), axis=-1)
+        masks.append(m)
+
+    train_scores["masks"] = np.concatenate(masks, axis=0)
+    np.savez_compressed(f"{score_cache_filename}/train", **train_scores)
+
     scores = {}
+    n_iters = 100
 
-    for name, ds in datasets.items():
-        scores[name] = {}
+    ## Multiple runs of random masks
+    for i in range(n_iters):
+        seed = 42 + i
+        tf.random.set_seed(seed)
+        np.random.seed(seed)
+        scores = {}
+        for name, ds in datasets.items():
+            scores[name] = {}
 
-        ds = preprocess(dataset, ds, train=False)
-        ds = ds.cache()  # Use same masks for all sigmas
-        ds = ds.prefetch(AUTOTUNE)
+            # ds = preprocess(dataset, ds, train=False)
+            # _ds = iter(ds)
+            _ds = ds.cache()  # Use same masks for all sigmas
 
-        scores[name]["scores"] = compute_batched_score_norms(
-            model, ds, masked_input=True
-        )
+            scores[name]["scores"] = compute_batched_score_norms(
+                model, _ds, masked_input=True, seed=seed
+            )
 
-        # Record masks used for scores
-        masks = []
-        for x in ds:
-            _, m = tf.split(x, (channels, 1), axis=-1)
-            masks.append(m)
-        scores[name]["masks"] = np.concatenate(masks, axis=0)
+            # Record masks used for scores
+            masks = []
+            for x in _ds:
+                _, m = tf.split(x, (channels, 1), axis=-1)
+                masks.append(m)
+            scores[name]["masks"] = np.concatenate(masks, axis=0)
 
-    np.savez_compressed(score_cache_filename, **scores)
+        np.savez_compressed(f"{score_cache_filename}/eval_{i}", **scores)
+
+    # TODO: Multiple runs of *same* mask for ALL data points
 
     return scores
 
@@ -71,11 +100,12 @@ def partial_observation_eval(model, complete_model_name):
         configs.config_values.marginal_ratio = ratio
         configs.config_values.min_marginal_ratio = ratio
         score_cache_filename = f"{score_cache_dir}/eval_mr{ratio}"
+        compute_and_save_score_norms(model, dataset, score_cache_filename)
 
-        if not os.path.exists(score_cache_filename):
-            compute_and_save_score_norms(model, dataset, score_cache_filename)
-        else:
-            print(f"Score cache '{score_cache_filename}' already exists!")
+        # if not os.path.exists(score_cache_filename):
+        #     compute_and_save_score_norms(model, dataset, score_cache_filename)
+        # else:
+        #     print(f"Score cache '{score_cache_filename}' already exists!")
     return
 
 
@@ -96,7 +126,23 @@ def build_ds(s, m, batch_sz):
     return ds
 
 
-def msma_dgmm_runner(model_name, dataset, marginal_ratio):
+def get_lls(gmm, ds):
+    lls = []  # np.zeros(X_train_pkc.shape[0])
+
+    for s, m, l in ds:
+        lls.append(gmm((s, m)))
+
+    return np.concatenate(lls)
+
+
+def concat_images(dataset_name, ds, masks):
+    ds = preprocess(dataset_name, ds, train=False)
+    ds_imgs = tf.concat([x for x in ds], axis=0).numpy()
+    ds_imgs[..., 1] = masks[..., 0]
+    return ds
+
+
+def msma_dgmm_runner(model_name, dataset, marginal_ratio, include_images=False):
 
     # TODO: loop over available ratios
     # marginal_ratio = 0.3
@@ -104,16 +150,22 @@ def msma_dgmm_runner(model_name, dataset, marginal_ratio):
         os.path.join("score_cache", "knee", model_name, f"eval_mr{marginal_ratio}")
         + ".npz"
     )
-    model_dir = os.path.join("saved_models", "msma_dgmm", dataset, f"{marginal_ratio}")
+
+    hparams = "img" if include_images else ""
+    model_dir = os.path.join(
+        "saved_models", "msma_dgmm", dataset, f"{marginal_ratio}", hparams
+    )
     os.makedirs(model_dir, exist_ok=True)
 
     start_time = datetime.now().strftime("%y%m%d-%H%M%S")
+
+    # TODO: Make val loss compute bits/dim instead
     callbacks = [
         tf.keras.callbacks.EarlyStopping(
             # Stop training when `val_loss` is no longer improving
             monitor="val_loss",
             # an absolute change of less than min_delta, will count as no improvement
-            min_delta=1e-3,
+            min_delta=1e-2,
             # "no longer improving" being defined as "for at least patience epochs"
             patience=10,
             verbose=1,
@@ -128,11 +180,14 @@ def msma_dgmm_runner(model_name, dataset, marginal_ratio):
             save_freq="epoch",
         ),
         tf.keras.callbacks.ReduceLROnPlateau(
-            monitor="val_loss", factor=0.2, min_delta=1e-3, patience=1, min_lr=1e-5
+            monitor="val_loss", factor=0.9, min_delta=1e-2, patience=1, min_lr=1e-5
         ),
         tf.keras.callbacks.TensorBoard(
-            f"./logs/msma_dgmm/{dataset}/{start_time}", update_freq=1
+            f"./logs/msma_dgmm/{dataset}/{start_time}",
+            update_freq=1,
+            profile_batch=0,
         ),
+        tf.keras.callbacks.CSVLogger(filename=os.path.join(model_dir, "trainlog.csv")),
     ]
 
     print(f"Loading from {cache_dir}")
@@ -148,20 +203,54 @@ def msma_dgmm_runner(model_name, dataset, marginal_ratio):
     s, m = X_train_dict["scores"][:1], X_train_dict["masks"][:1]
     input_shape = m.shape[1:]
 
-    gmm = DGMM(img_shape=input_shape, k_mixt=10, D=10)
-    gmm.compile(optimizer=tf.keras.optimizers.Adamax(learning_rate=3e-4))
+    gmm = DGMM(img_shape=input_shape, k_mixt=5, D=10)
+    opt = tf.keras.optimizers.RMSprop(
+        learning_rate=0.001
+    )  # tf.keras.optimizers.Adamax(learning_rate=3e-4)
+    gmm.compile(optimizer=opt)
 
-    val_batches = 20
-    X_train_ds = build_ds(X_train_dict["scores"], X_train_dict["masks"], 32).skip(
-        val_batches
-    )
+    batch_size = 128
+    val_batches = 10
+
+    ### Experimental: Including images used for calculating scores
+    if include_images:
+        # load dataset from tfds with test/ood data
+        train, test, ood = load_data(dataset, include_ood=True, supervised=False)
+        X_train_dict["masks"] = concat_images(dataset, train, X_train_dict["masks"])
+        X_test_dict["masks"] = concat_images(dataset, test, X_test_dict["masks"])
+        X_ood_dict["masks"] = concat_images(dataset, ood, X_ood_dict["masks"])
+    #########
+
+    X_train_ds = build_ds(
+        X_train_dict["scores"], X_train_dict["masks"], batch_size
+    ).skip(val_batches)
     X_val_ds = (
-        build_ds(X_train_dict["scores"], X_train_dict["masks"], 32)
+        build_ds(X_train_dict["scores"], X_train_dict["masks"], batch_size)
         .take(val_batches)
         .cache()
     )
 
+    X_test_ds = build_ds(X_test_dict["scores"], X_test_dict["masks"], 128)
+    X_ood_ds = build_ds(X_ood_dict["scores"], X_ood_dict["masks"], 128)
+
+    if configs.config_values.resume:
+        load_last_checkpoint(gmm, model_dir)
+
     gmm.fit(X_train_ds, epochs=100, validation_data=X_val_ds, callbacks=callbacks)
+
+    ### Evaluating DGMM
+    score_cache_dir = os.path.join("score_cache", dataset, "msma_dgmm")
+    os.makedirs(score_cache_dir, exist_ok=True)
+
+    score_cache_filename = f"{score_cache_dir}/ll_{marginal_ratio}"
+    gmm.training = False
+    gmm_lls = {}
+    train_ll = get_lls(gmm, X_train_ds)
+    test_ll = get_lls(gmm, X_test_ds)
+    ood_ll = get_lls(gmm, X_ood_ds)
+
+    gmm_lls[str(marginal_ratio)] = {"train": train_ll, "test": test_ll, "ood": ood_ll}
+    np.savez_compressed(score_cache_filename, **gmm_lls)
 
     return
 
@@ -181,14 +270,14 @@ def main():
         ocnn=configs.config_values.ocnn,
     )
 
+    configs.config_values.global_batch_size = configs.config_values.batch_size
+
     if configs.config_values.mode == "msma" and configs.config_values.mask_marginals:
         return msma_dgmm_runner(
             complete_model_name,
             configs.config_values.dataset,
             configs.config_values.marginal_ratio,
         )
-
-    configs.config_values.global_batch_size = configs.config_values.batch_size
 
     if configs.config_values.mask_marginals:
         return partial_observation_eval(model, complete_model_name)

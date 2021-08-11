@@ -298,7 +298,7 @@ def compute_scores(model, xs, masked_input=False):
 
 
 # TOD0: Save intermediate score tensors to a file
-def compute_batched_score_norms(model, x_test, masked_input=False):
+def compute_batched_score_norms(model, x_test, masked_input=False, seed=None):
     # Sigma Idx -> Score
     score_dict = []
     masks_arr = []
@@ -310,6 +310,10 @@ def compute_batched_score_norms(model, x_test, masked_input=False):
 
         progress_bar.set_description("Sigma: {:.4f}".format(sigma))
         _logits = []
+        if seed:
+            tf.random.set_seed(seed)
+            np.random.seed(seed)
+
         for x_batch in x_test:
             idx_sigmas = tf.ones(x_batch.shape[0], dtype=tf.int32) * idx
             score = model([x_batch, idx_sigmas]) * sigma
@@ -397,10 +401,10 @@ def plot_curves(inlier_score, outlier_score, label, axs=()):
     axs[0].legend()
     axs[1].legend()
 
-    if len(axs) == 0:
-        fig.suptitle("{} vs {}".format(*labels), fontsize=20)
-        plt.show()
-        plt.close()
+    # if len(axs) == 0:
+    #     fig.suptitle("{} vs {}".format(*labels), fontsize=20)
+    #     plt.show()
+    #     plt.close()
 
     return axs
 
