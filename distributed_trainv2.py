@@ -84,6 +84,7 @@ def main():
         ema = tf.train.ExponentialMovingAverage(decay=0.999)
         ema.in_use = False
 
+        step = tf.Variable(0)
         model, optimizer, step, ocnn_model, ocnn_optimizer = utils.try_load_model(
             save_dir,
             step_ckpt=configs.config_values.resume_from,
@@ -102,13 +103,13 @@ def main():
 
         # Checkpoint should also be under strategy
         ckpt = tf.train.Checkpoint(
-            step=tf.Variable(0), optimizer=optimizer, model=model
+            step=tf.Variable(step), optimizer=optimizer, model=model
         )
 
     manager = tf.train.CheckpointManager(
         ckpt, directory=save_dir, max_to_keep=configs.config_values.max_to_keep
     )
-    step = 0
+    step = int(step)
 
     ####### Training Steps #######
     train_loss = tf.keras.metrics.Mean("train_loss", dtype=tf.float32)
