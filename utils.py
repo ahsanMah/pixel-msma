@@ -79,10 +79,15 @@ def find_k_closest(image, k, data_as_array):
 
 
 def get_dataset_image_size(dataset_name):
-    return [
+    input_shape = [
         int(x.strip())
         for x in configs.dataconfig[dataset_name]["downsample_size"].split(",")
     ]
+
+    if configs.config_values.mask_marginals:
+        input_shape[-1] += 1  # Append a mask channel
+
+    return input_shape
 
 
 def check_args_validity(args):
@@ -94,6 +99,9 @@ def check_args_validity(args):
         "refinenet_twores",
         "masked_refinenet",
     ]
+
+    args.global_batch_size = args.batch_size
+
     if args.max_to_keep == -1:
         args.max_to_keep = None
 
@@ -345,9 +353,6 @@ def evaluate_print_model_summary(model, verbose=True):
     input_shape = [
         batch,
     ] + get_dataset_image_size(configs.config_values.dataset)
-
-    if configs.config_values.mask_marginals:
-        input_shape[-1] += 1  # Append a mask channel
 
     # # TODO: This is very hacky, find better solution
     # if configs.config_values.class_label == "kspace_complex":
@@ -659,8 +664,8 @@ def build_distributed_trainers(
             with tf.GradientTape() as t:
                 scores = model([x_batch_input, idx_sigmas])
 
-                if configs.config_values.y_cond:
-                    scores = scores * masks
+                # if configs.config_values.y_cond:
+                #     scores = scores * masks
 
                 current_loss = dsm_loss(scores, x_batch_perturbed, x_batch, sigmas)
 

@@ -151,6 +151,7 @@ def load_knee_data(include_ood=False, supervised=False):
             h = np.quantile(img.reshape(-1, 2), q=quantile, axis=0)
             # l = np.min(img.reshape(-1, 2), axis=0)
             l = np.quantile(img.reshape(-1, 2), q=(1 - quantile) / 10, axis=0)
+            # print(h,l)
         else:
             h = np.quantile(img, q=quantile)
             # l = np.min(img)
@@ -200,7 +201,7 @@ def load_knee_data(include_ood=False, supervised=False):
                 else:
                     yield img
 
-        if "kspace" == category:
+        if "kspace" in category:
             print(f"Training on {'complex' if complex_input else 'image'} kspace...")
             return tf_gen_ksp
 
@@ -461,7 +462,8 @@ def knee_aug(x):
     return x
 
 
-def np_build_mask_fn():
+def np_build_mask_fn(random_masks=True):
+
     # Building mask of random columns to **keep**
     # batch_sz, img_h, img_w, c = x.shape
     img_sz = configs.dataconfig[configs.config_values.dataset]["downsample_size"]
@@ -496,7 +498,27 @@ def np_build_mask_fn():
         x = np.concatenate([x, mask], axis=-1)
         return x
 
-    return apply_random_mask
+    # Build a single mask for the entire dataset - mainly useful for evaluation
+    np.random.shuffle(high_freq_cols)
+    n_mask_cols = int(configs.config_values.marginal_ratio * img_w)
+    rand_cols = high_freq_cols[:n_mask_cols]
+
+    mask = np.zeros((img_h, img_w, 1), dtype=np.float32)
+    mask[:, rand_cols, :] = 1.0
+    mask[:, low_freq_cols, :] = 1.0
+
+    def apply_constant_mask(x):
+        # Applying the same mask to all samples
+        x = x * mask
+        x = np.concatenate([x, mask], axis=-1)
+        return x
+
+    if random_masks:
+        mask_fn = apply_random_mask
+    else:
+        mask_fn = apply_constant_mask
+
+    return mask_fn
 
 
 def map_decorator(func):

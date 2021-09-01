@@ -73,16 +73,6 @@ def build_model(dataset, pretrained=False):
 
     logging.info(model.summary())
 
-    bce = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
-    optimizer = tf.keras.optimizers.Adam(learning_rate=3e-5)
-    # optimizer = tf.keras.optimizers.SGD(learning_rate=0.01, momentum=0.9, nesterov=True)
-
-    model.compile(
-        optimizer=optimizer,
-        loss=bce,
-        metrics=[tf.keras.metrics.CategoricalAccuracy()],
-    )
-
     return model
 
 
@@ -123,6 +113,16 @@ def build_and_train(dataset, n_epochs=25, pretrained=False):
         return x, l
 
     model = build_model(dataset, pretrained)
+    bce = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=3e-5)
+    # optimizer = tf.keras.optimizers.SGD(learning_rate=0.01, momentum=0.9, nesterov=True)
+
+    model.compile(
+        optimizer=optimizer,
+        loss=bce,
+        metrics=[tf.keras.metrics.CategoricalAccuracy()],
+    )
+
     train_ds, val_ds, test_ds = load_data(dataset, include_ood=False, supervised=True)
 
     train_ds = preprocess("knee", train_ds, train=True)
@@ -145,19 +145,20 @@ def build_and_train(dataset, n_epochs=25, pretrained=False):
     )
 
     logging.info("====== Performance on Test Set ======")
-    load_last_checkpoint(model, MODELDIR)
-    test_preds = model.predict(test_ds)
-    test_labels = np.concatenate([np.argmax(l, axis=1) for _, l in test_ds], axis=0)
+    load_and_eval(dataset)
 
-    test_scores = test_preds[:, 1]
-    inlier_test_scores = test_scores[test_labels == 0]
-    outlier_test_scores = test_scores[test_labels == 1]
+    # load_last_checkpoint(model, MODELDIR)
+    # test_preds = model.predict(test_ds)
+    # test_labels = np.concatenate([np.argmax(l, axis=1) for _, l in test_ds], axis=0)
 
-    metrics = ood_metrics(
-        inlier_test_scores, outlier_test_scores, verbose=True, plot=True
-    )
-    logging.info(metrics)
-    np.savez_compressed(score_cache_filename, **gmm_lls)
+    # test_scores = test_preds[:, 1]
+    # inlier_test_scores = test_scores[test_labels == 0]
+    # outlier_test_scores = test_scores[test_labels == 1]
+
+    # metrics = ood_metrics(
+    #     inlier_test_scores, outlier_test_scores, verbose=True, plot=True
+    # )
+    # logging.info(metrics)
 
     return history
 
@@ -185,24 +186,23 @@ def load_and_eval(dataset, random=True):
     logger.info("====== Evaluation on Test Set ======")
     model = build_model(dataset, pretrained)
     load_last_checkpoint(model, MODELDIR)
+    model.training = False
 
     train_ds, val_ds, test_ds = load_data(dataset, include_ood=False, supervised=True)
-    n_iters = 100
+    test_ds = preprocess("knee", test_ds, train=False)
+    test_ds = test_ds.prefetch(buffer_size=AUTOTUNE)
+    test_labels = np.concatenate([np.argmax(l, axis=1) for _, l in test_ds], axis=0)
+
+    # test_ds = preprocess("knee", test_ds, train=False)
 
     ## Multiple runs of random masks
+    n_iters = 100
     for i in range(n_iters):
         print(f"==== RUN #{i} ====")
         tf.random.set_seed(42 + i)
         np.random.seed(42 + i)
-
-        _test_ds = preprocess("knee", test_ds, train=False)
-        _test_ds = _test_ds.prefetch(buffer_size=AUTOTUNE)
-
+        _test_ds = iter(test_ds)
         test_preds = model.predict(_test_ds)
-        test_labels = np.concatenate(
-            [np.argmax(l, axis=1) for _, l in _test_ds], axis=0
-        )
-
         test_scores = test_preds[:, 1]
         inlier_test_scores = test_scores[test_labels == 0]
         outlier_test_scores = test_scores[test_labels == 1]
@@ -321,9 +321,11 @@ if __name__ == "__main__":
 
     if args.experiment == "eval":
 
-        for ratio in [0.8]:
-            configs.config_values.marginal_ratio = ratio
-            configs.config_values.min_marginal_ratio = ratio
-            MODELDIR = os.path.join(model_path, dirname, dataset, f"{ratio}")
-            os.makedirs(MODELDIR, exist_ok=True)
-            load_and_eval(dataset)
+        load_and_eval(dataset)
+
+        # for ratio in [0.2, 0.3, 0.5, 0.8]:
+        #     configs.config_values.marginal_ratio = ratio
+        #     configs.config_values.min_marginal_ratio = ratio
+        #     MODELDIR = os.path.join(model_path, dirname, dataset, f"{ratio}")
+        #     os.makedirs(MODELDIR, exist_ok=True)
+        #     load_and_eval(dataset)
