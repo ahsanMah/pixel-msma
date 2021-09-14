@@ -292,6 +292,12 @@ def _build_parser():
     )
 
     parser.add_argument(
+        "--constant_mask",
+        action="store_true",
+        help="mostly useful for evaluating data with a constant mask for entire run",
+    )
+
+    parser.add_argument(
         "--mixed_precision",
         action="store_true",
         help="training with mixed precision can help reduce memory footprint and increase batch size",
@@ -620,7 +626,7 @@ def build_distributed_trainers(
     num_L = sigma_levels.shape[0]
     train_loss, test_loss = loss_aggregators
     input_shape = get_dataset_image_size(configs.config_values.dataset)
-    channels = input_shape[-1]
+    channels = input_shape[-1] - 1
 
     @tf.function(experimental_compile=True)
     def dsm_loss(score, x_perturbed, x, sigmas):

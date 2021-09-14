@@ -319,7 +319,7 @@ def compute_batched_score_norms(model, x_test, masked_input=False, seed=None):
             score = model([x_batch, idx_sigmas]) * sigma
 
             if masked_input:
-                _, masks = tf.split(x_batch, (channels, 1), axis=-1)
+                _, masks = tf.split(x_batch, (channels - 1, 1), axis=-1)
                 score = score * masks
 
             score = reduce_norm(score)

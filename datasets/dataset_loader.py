@@ -130,7 +130,6 @@ def load_knee_data(include_ood=False, supervised=False):
 
     category = configs.config_values.class_label
     complex_input = "complex" in configs.config_values.dataset
-
     _key = "datadir"
     if configs.config_values.longleaf:
         _key += "_longleaf"
@@ -434,10 +433,10 @@ def mvtec_aug(x):
 @tf.function
 def knee_preproc(x, l=None):
     # img_sz = configs.dataconfig[configs.config_values.dataset]["image_size"]
-    down_sz = configs.dataconfig[configs.config_values.dataset]["downsample_size"]
+    # down_sz = configs.dataconfig[configs.config_values.dataset]["downsample_size"]
 
-    h, w, c = [int(x.strip()) for x in down_sz.split(",")]
-    x = tf.image.resize(x, (h, w), method="lanczos5")
+    # h, w, c = [int(x.strip()) for x in down_sz.split(",")]
+    # x = tf.image.resize(x, (h, w), method="lanczos5")
     print("Resized:", x.shape)
 
     if l is not None:
@@ -462,7 +461,7 @@ def knee_aug(x):
     return x
 
 
-def np_build_mask_fn(random_masks=True):
+def np_build_mask_fn(constant_mask=False):
 
     # Building mask of random columns to **keep**
     # batch_sz, img_h, img_w, c = x.shape
@@ -513,10 +512,10 @@ def np_build_mask_fn(random_masks=True):
         x = np.concatenate([x, mask], axis=-1)
         return x
 
-    if random_masks:
-        mask_fn = apply_random_mask
-    else:
+    if constant_mask:
         mask_fn = apply_constant_mask
+    else:
+        mask_fn = apply_random_mask
 
     return mask_fn
 
@@ -584,7 +583,9 @@ def preprocess(dataset_name, data, train=True):
     # reordered batching and masking
     if configs.config_values.mask_marginals:
         _fn = lambda x: tf.numpy_function(
-            func=np_build_mask_fn(), inp=[x], Tout=tf.float32
+            func=np_build_mask_fn(configs.config_values.constant_mask),
+            inp=[x],
+            Tout=tf.float32,
         )
 
         def mask_fn(x, l=None):

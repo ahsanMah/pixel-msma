@@ -22,6 +22,9 @@ from torch.fft import fftshift, ifftshift
 
 import tensorflow as tf
 
+IMG_H = 110
+IMG_W = 80
+
 
 class FastKnee(Dataset):
     def __init__(self, root):
@@ -79,7 +82,7 @@ class FastKnee(Dataset):
             shape = target.shape
             target = tf.image.resize(
                 target,
-                (220, 160),
+                (IMG_H, IMG_W),
                 method="lanczos5",
                 # preserve_aspect_ratio=True,
                 antialias=True,
@@ -137,7 +140,7 @@ class FastKneeTumor(FastKnee):
             # Downsample in image space
             target = tf.image.resize(
                 target,
-                (220, 160),
+                (IMG_H, IMG_W),
                 method="lanczos5",
                 # preserve_aspect_ratio=True,
                 antialias=True,
