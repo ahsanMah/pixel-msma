@@ -140,7 +140,7 @@ def load_knee_data(include_ood=False, supervised=False):
     train_dir = os.path.join(datadir, "singlecoil_train")
     val_dir = os.path.join(datadir, "singlecoil_val")
     test_dir = os.path.join(datadir, "singlecoil_test_v2")
-    img_sz = configs.dataconfig[configs.config_values.dataset]["image_size"]
+    img_sz = configs.dataconfig[configs.config_values.dataset]["downsample_size"]
     img_h, img_w, c = [int(x.strip()) for x in img_sz.split(",")]
 
     def normalize(img, complex_input=False, quantile=0.999):
@@ -185,9 +185,9 @@ def load_knee_data(include_ood=False, supervised=False):
         # TODO: Build complex loader for img
 
         def tf_gen_img():
-            for k, x in ds:
-                img = preprocessor(x)
-                img = normalizer(img)
+            for x, mask in ds:
+                # img = preprocessor(x)
+                img = normalizer(x)
                 yield img
 
         def tf_gen_ksp():
@@ -220,7 +220,11 @@ def load_knee_data(include_ood=False, supervised=False):
             output_type = tf.float32
             output_shape = tf.TensorShape([img_h, img_w, c])
 
-        dataset = FastKneeTumor(datadir) if ood else FastKnee(datadir)
+        dataset = (
+            FastKneeTumor(datadir, mask_marginals)
+            if ood
+            else FastKnee(datadir, mask_marginals)
+        )
         ds = tf.data.Dataset.from_generator(
             make_generator(dataset, ood=ood),
             output_type,
@@ -580,23 +584,24 @@ def preprocess(dataset_name, data, train=True):
     if train:
         data = data.shuffle(buffer_size=100, reshuffle_each_iteration=True)
 
+    # FIXME: Maskinng is done in the dataloader now
     # reordered batching and masking
-    if configs.config_values.mask_marginals:
-        _fn = lambda x: tf.numpy_function(
-            func=np_build_mask_fn(configs.config_values.constant_mask),
-            inp=[x],
-            Tout=tf.float32,
-        )
+    # if configs.config_values.mask_marginals:
+    #     _fn = lambda x: tf.numpy_function(
+    #         func=np_build_mask_fn(configs.config_values.constant_mask),
+    #         inp=[x],
+    #         Tout=tf.float32,
+    #     )
 
-        def mask_fn(x, l=None):
-            x = _fn(x)
+    #     def mask_fn(x, l=None):
+    #         x = _fn(x)
 
-            if l is not None:
-                return x, l
+    #         if l is not None:
+    #             return x, l
 
-            return x
+    #         return x
 
-        data = data.map(mask_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    #     data = data.map(mask_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
 
     if configs.config_values.dataset != "celeb_a":
         data = data.batch(configs.config_values.global_batch_size)

@@ -84,8 +84,8 @@ def get_dataset_image_size(dataset_name):
         for x in configs.dataconfig[dataset_name]["downsample_size"].split(",")
     ]
 
-    if configs.config_values.mask_marginals:
-        input_shape[-1] += 1  # Append a mask channel
+    # if configs.config_values.mask_marginals:
+    #     input_shape[-1] += 1  # Append a mask channel
 
     return input_shape
 
@@ -106,7 +106,7 @@ def check_args_validity(args):
         args.max_to_keep = None
 
     args.mask_marginals = args.marginal_ratio >= 0.0
-    args.y_cond = args.marginal_ratio >= 0.0
+    # args.y_cond = args.marginal_ratio >= 0.0
 
     args.split = args.split.split(",")
     args.split = list(map(lambda x: x.strip(), args.split))

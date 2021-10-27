@@ -19,18 +19,78 @@ import argparse
 from torch.fft import fft2 as fft
 from torch.fft import ifft2 as ifft
 from torch.fft import fftshift, ifftshift
-
+import configs
 import tensorflow as tf
 
 IMG_H = 110
 IMG_W = 80
 
 
-class FastKnee(Dataset):
-    def __init__(self, root):
-        super().__init__()
-        self.examples = []
+def np_build_mask_fn(constant_mask=False):
 
+    # Building mask of random columns to **keep**
+    # batch_sz, img_h, img_w, c = x.shape
+    img_sz = configs.dataconfig[configs.config_values.dataset]["downsample_size"]
+    img_h, img_w, c = [int(x.strip()) for x in img_sz.split(",")]
+
+    # We do *not* want to mask out the middle (low) frequencies
+    # Keeping 10% of low freq is equivalent to Scenario-30L in activemri paper
+    low_freq_start = int(0.45 * img_w)
+    low_freq_end = img_w - int(0.45 * img_w)
+    low_freq_cols = np.arange(low_freq_start, low_freq_end)
+
+    high_freq_cols = np.concatenate(
+        (np.arange(0, low_freq_start), np.arange(low_freq_end, img_w))
+    )
+
+    def apply_random_mask(x):
+        np.random.shuffle(high_freq_cols)
+        # rand_ratio = np.random.uniform(
+        #     low=configs.config_values.min_marginal_ratio,
+        #     high=configs.config_values.marginal_ratio,
+        #     size=1,
+        # )
+        rand_ratio = configs.config_values.marginal_ratio
+        n_mask_cols = int(rand_ratio * img_w)
+        rand_cols = high_freq_cols[:n_mask_cols]
+
+        mask = np.zeros((img_h, img_w, 1), dtype=np.float32)
+        mask[:, rand_cols, :] = 1.0
+        mask[:, low_freq_cols, :] = 1.0
+
+        # Applying + Appending mask
+        x = x * mask
+        # x = np.concatenate([x, mask], axis=-1)
+        return x, mask
+
+    # Build a single mask for the entire dataset - mainly useful for evaluation
+    np.random.shuffle(high_freq_cols)
+    n_mask_cols = int(configs.config_values.marginal_ratio * img_w)
+    rand_cols = high_freq_cols[:n_mask_cols]
+
+    mask = np.zeros((img_h, img_w, 1), dtype=np.float32)
+    mask[:, rand_cols, :] = 1.0
+    mask[:, low_freq_cols, :] = 1.0
+
+    def apply_constant_mask(x):
+        # Applying the same mask to all samples
+        x = x * mask
+        # x = np.concatenate([x, mask], axis=-1)
+        return x, mask
+
+    if constant_mask:
+        mask_fn = apply_constant_mask
+    else:
+        mask_fn = apply_random_mask
+
+    return mask_fn
+
+
+class FastKnee(Dataset):
+    def __init__(self, root, partial=False):
+        super().__init__()
+        self.partial = partial
+        self.examples = []
         files = []
         for fname in list(pathlib.Path(root).iterdir()):
             files.append(fname)
@@ -44,19 +104,26 @@ class FastKnee(Dataset):
                 for slice_id in range(num_slices // 4, num_slices // 4 * 3)
             ]
 
+        if self.partial:
+            self.mask_fn = np_build_mask_fn
+
     def __len__(self):
         return len(self.examples)
 
     def __getitem__(self, i):
         fname, slice_id = self.examples[i]
+        mask = None
+
         with h5py.File(fname, "r") as data:
             kspace = data["kspace"][slice_id]
-            kspace = torch.from_numpy(np.stack([kspace.real, kspace.imag], axis=-1))
+            kspace = np.stack([kspace.real, kspace.imag])
+            kspace = torch.from_numpy(kspace, axis=-1)
 
             # For 1.8+
             # pytorch now offers a complex64 data type
             kspace = torch.view_as_complex(kspace)
             kspace = ifftshift(kspace, dim=(0, 1))
+
             # norm=forward means no normalization
             target = ifft(kspace, dim=(0, 1), norm="forward")
             target = ifftshift(target, dim=(0, 1))
@@ -70,37 +137,46 @@ class FastKnee(Dataset):
             # plt.show()
 
             # center crop and resize
-            # target = torch.unsqueeze(target, dim=0)
-            # target = center_crop(target, (128, 128))
-            # target = torch.squeeze(target)
+            target = target.permute(2, 0, 1)
+            target = center_crop(target, (128, 128))
+            target = torch.squeeze(target)
+            target = target.permute(1, 2, 0)
+            target = torch.view_as_complex(target)
 
-            # Crop out ends
-            target = np.stack([target.real, target.imag], axis=-1)
-            target = target[100:-100, 24:-24, :]
+            if self.partial:
+                # Get kspace of cropped image
+                kspace = fftshift(target, dim=(0, 1))
+                kspace = fft(kspace, dim=(0, 1))
 
-            # Downsample in image space
-            shape = target.shape
-            target = tf.image.resize(
-                target,
-                (IMG_H, IMG_W),
-                method="lanczos5",
-                # preserve_aspect_ratio=True,
-                antialias=True,
-            ).numpy()
+                # Realign kspace to keep high freq signal in center
+                # Note that original fastmri code did not do this...
+                kspace = fftshift(kspace, dim=(0, 1))
+                kspace = np.stack([kspace.real, kspace.imag])
 
-            # Get kspace of cropped image
-            target = torch.view_as_complex(torch.from_numpy(target))
-            kspace = fftshift(target, dim=(0, 1))
-            kspace = fft(kspace, dim=(0, 1))
-            # Realign kspace to keep high freq signal in center
-            # Note that original fastmri code did not do this...
-            kspace = fftshift(kspace, dim=(0, 1))
+                # Mask out regions
+                kspace, mask = self.mask_fn(kspace)
+
+                # Recompute target image with masked kspace
+                target = ifft(kspace, dim=(0, 1), norm="forward")
+                target = ifftshift(target, dim=(0, 1))
+
+            target = complex_magnitude(target)
+
+            # Plot images to confirm fft worked
+            # t_img = target
+            # print(t_img.dtype, t_img.shape)
+            # plt.imshow(t_img)
+            # plt.show()
+            # plt.imshow(target.real)
+            # plt.show()
+            # plt.savefig("masked_target.png")
+            # exit()
 
             # Normalize using mean of k-space in training data
             target /= 7.072103529760345e-07
             kspace /= 7.072103529760345e-07
 
-        return kspace, target
+        return target, mask
 
 
 class FastKneeTumor(FastKnee):
