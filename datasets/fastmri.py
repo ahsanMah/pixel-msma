@@ -1,3 +1,4 @@
+from numpy.core.fromnumeric import squeeze
 import torch
 import pathlib
 import h5py
@@ -54,7 +55,7 @@ def np_build_mask_fn(constant_mask=False):
         n_mask_cols = int(rand_ratio * img_w)
         rand_cols = high_freq_cols[:n_mask_cols]
 
-        mask = np.zeros((img_h, img_w, 1), dtype=np.float32)
+        mask = np.zeros((img_h, img_w, 2), dtype=np.float32)
         mask[:, rand_cols, :] = 1.0
         mask[:, low_freq_cols, :] = 1.0
 
@@ -68,7 +69,7 @@ def np_build_mask_fn(constant_mask=False):
     n_mask_cols = int(configs.config_values.marginal_ratio * img_w)
     rand_cols = high_freq_cols[:n_mask_cols]
 
-    mask = np.zeros((img_h, img_w, 1), dtype=np.float32)
+    mask = np.zeros((img_h, img_w, 2), dtype=np.float32)
     mask[:, rand_cols, :] = 1.0
     mask[:, low_freq_cols, :] = 1.0
 
@@ -105,7 +106,7 @@ class FastKnee(Dataset):
             ]
 
         if self.partial:
-            self.mask_fn = np_build_mask_fn
+            self.mask_fn = np_build_mask_fn(constant_mask=False)
 
     def __len__(self):
         return len(self.examples)
@@ -116,8 +117,8 @@ class FastKnee(Dataset):
 
         with h5py.File(fname, "r") as data:
             kspace = data["kspace"][slice_id]
-            kspace = np.stack([kspace.real, kspace.imag])
-            kspace = torch.from_numpy(kspace, axis=-1)
+            kspace = np.stack([kspace.real, kspace.imag], axis=-1)
+            kspace = torch.from_numpy(kspace)
 
             # For 1.8+
             # pytorch now offers a complex64 data type
@@ -137,10 +138,11 @@ class FastKnee(Dataset):
             # plt.show()
 
             # center crop and resize
-            target = target.permute(2, 0, 1)
+            target = torch.stack([target.real, target.imag])
             target = center_crop(target, (128, 128))
-            target = torch.squeeze(target)
+            # print("After crop:", target.shape)
             target = target.permute(1, 2, 0)
+            target = target.contiguous()
             target = torch.view_as_complex(target)
 
             if self.partial:
@@ -151,37 +153,40 @@ class FastKnee(Dataset):
                 # Realign kspace to keep high freq signal in center
                 # Note that original fastmri code did not do this...
                 kspace = fftshift(kspace, dim=(0, 1))
-                kspace = np.stack([kspace.real, kspace.imag])
+                kspace = np.stack([kspace.real, kspace.imag], axis=-1)
 
                 # Mask out regions
                 kspace, mask = self.mask_fn(kspace)
 
                 # Recompute target image with masked kspace
+                kspace = torch.from_numpy(kspace)
+                kspace = kspace.contiguous()
+                kspace = torch.view_as_complex(kspace)
                 target = ifft(kspace, dim=(0, 1), norm="forward")
                 target = ifftshift(target, dim=(0, 1))
 
             target = complex_magnitude(target)
 
             # Plot images to confirm fft worked
-            # t_img = target
+            # import matplotlib.pyplot as plt
+
+            # t_img = mask[..., 0]
             # print(t_img.dtype, t_img.shape)
             # plt.imshow(t_img)
             # plt.show()
-            # plt.imshow(target.real)
-            # plt.show()
-            # plt.savefig("masked_target.png")
+            # plt.savefig("mask.png")
             # exit()
 
             # Normalize using mean of k-space in training data
             target /= 7.072103529760345e-07
             kspace /= 7.072103529760345e-07
-
+        target = target.unsqueeze(dim=-1)
         return target, mask
 
 
 class FastKneeTumor(FastKnee):
-    def __init__(self, root):
-        super().__init__(root)
+    def __init__(self, root, partial=False):
+        super().__init__(root, partial)
         self.deform = RandTumor(
             spacing=30.0,
             max_tumor_size=50.0,
@@ -204,37 +209,52 @@ class FastKneeTumor(FastKnee):
 
             # transform
             target = torch.stack([target.real, target.imag])
-            target = self.deform(target)  # outputs numpy
-            target = torch.from_numpy(target)
-            target = target.permute(1, 2, 0).contiguous()
+            target = self.deform(target)
+
             # center crop and resize
-            # target = center_crop(target, (128, 128))
-            # target = resize(target, (128,128))
-
-            # Crop out ends
-            target = target.numpy()[100:-100, 24:-24, :]
-            # Downsample in image space
-            target = tf.image.resize(
-                target,
-                (IMG_H, IMG_W),
-                method="lanczos5",
-                # preserve_aspect_ratio=True,
-                antialias=True,
-            ).numpy()
-
-            # Making contiguous is necessary for complex view
-            target = torch.from_numpy(target)
+            print(target.shape)
+            target = center_crop(target, (128, 128))
+            # print("After crop:", target.shape)
+            target = target.permute(1, 2, 0)
             target = target.contiguous()
             target = torch.view_as_complex(target)
 
-            kspace = fftshift(target, dim=(0, 1))
-            kspace = fft(kspace, dim=(0, 1))
-            kspace = fftshift(kspace, dim=(0, 1))
+            if self.partial:
+                # Get kspace of cropped image
+                kspace = fftshift(target, dim=(0, 1))
+                kspace = fft(kspace, dim=(0, 1))
+
+                # Realign kspace to keep high freq signal in center
+                # Note that original fastmri code did not do this...
+                kspace = fftshift(kspace, dim=(0, 1))
+                kspace = np.stack([kspace.real, kspace.imag], axis=-1)
+
+                # Mask out regions
+                kspace, mask = self.mask_fn(kspace)
+
+                # Recompute target image with masked kspace
+                kspace = torch.from_numpy(kspace)
+                kspace = kspace.contiguous()
+                kspace = torch.view_as_complex(kspace)
+                target = ifft(kspace, dim=(0, 1), norm="forward")
+                target = ifftshift(target, dim=(0, 1))
+
+            target = complex_magnitude(target)
+
+            # Plot images to confirm fft worked
+            # import matplotlib.pyplot as plt
+
+            # t_img = target
+            # print(t_img.dtype, t_img.shape)
+            # plt.imshow(t_img)
+            # plt.show()
+            # plt.savefig("mask_tumor.png")
+            # exit()
 
             # Normalize using mean of k-space in training data
             target /= 7.072103529760345e-07
             kspace /= 7.072103529760345e-07
-
+        target = target.unsqueeze(dim=-1)
         return kspace, target
 
 
