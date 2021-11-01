@@ -80,6 +80,7 @@ def np_build_mask_fn(constant_mask=False):
         return x, mask
 
     if constant_mask:
+        print("Using constant mask function...")
         mask_fn = apply_constant_mask
     else:
         mask_fn = apply_random_mask
@@ -88,7 +89,7 @@ def np_build_mask_fn(constant_mask=False):
 
 
 class FastKnee(Dataset):
-    def __init__(self, root, partial=False):
+    def __init__(self, root, partial=False, constant=False):
         super().__init__()
         self.partial = partial
         self.examples = []
@@ -106,7 +107,7 @@ class FastKnee(Dataset):
             ]
 
         if self.partial:
-            self.mask_fn = np_build_mask_fn(constant_mask=False)
+            self.mask_fn = np_build_mask_fn(constant_mask=constant)
 
     def __len__(self):
         return len(self.examples)
@@ -168,14 +169,14 @@ class FastKnee(Dataset):
             target = complex_magnitude(target)
 
             # Plot images to confirm fft worked
-            # import matplotlib.pyplot as plt
+            import matplotlib.pyplot as plt
 
-            # t_img = mask[..., 0]
-            # print(t_img.dtype, t_img.shape)
-            # plt.imshow(t_img)
-            # plt.show()
-            # plt.savefig("mask.png")
-            # exit()
+            t_img = mask[..., 0]
+            print(t_img.dtype, t_img.shape)
+            plt.imshow(t_img)
+            plt.show()
+            plt.savefig("mask_c.png")
+            exit()
 
             # Normalize using mean of k-space in training data
             target /= 7.072103529760345e-07
@@ -185,7 +186,7 @@ class FastKnee(Dataset):
 
 
 class FastKneeTumor(FastKnee):
-    def __init__(self, root, partial=False):
+    def __init__(self, root, partial=False, constant=False):
         super().__init__(root, partial)
         self.deform = RandTumor(
             spacing=30.0,

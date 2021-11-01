@@ -136,6 +136,7 @@ def load_knee_data(include_ood=False, supervised=False):
 
     max_marginal_ratio = configs.config_values.marginal_ratio
     mask_marginals = configs.config_values.mask_marginals
+    constant_mask = configs.config_values.constant_mask
     datadir = configs.dataconfig["knee"][_key]
     train_dir = os.path.join(datadir, "singlecoil_train")
     val_dir = os.path.join(datadir, "singlecoil_val")
@@ -221,9 +222,9 @@ def load_knee_data(include_ood=False, supervised=False):
             output_shape = tf.TensorShape([img_h, img_w, c])
 
         dataset = (
-            FastKneeTumor(datadir, mask_marginals)
+            FastKneeTumor(datadir, mask_marginals, constant_mask)
             if ood
-            else FastKnee(datadir, mask_marginals)
+            else FastKnee(datadir, mask_marginals, constant_mask)
         )
         ds = tf.data.Dataset.from_generator(
             make_generator(dataset, ood=ood),
