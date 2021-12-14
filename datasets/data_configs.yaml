@@ -6,20 +6,25 @@ mnist:
 mvtec:
   datadir: "/DATA/Users/amahmood/GDrive/MVTec_AD/"
   datadir_gdrive: "/content/drive/MyDrive/ML_Datasets/MvTec_AD/"
-  image_size: 128, 128, 3   # Shape for training after crop
+  crop_size: 128, 128, 3   # Shape for training after crop
   downsample: 256, 256, 3  # Shape after downsampling (before crop)
   batch_size: 32
+  n_channels: 3
 
 mvtec_lowres:
   datadir: "/DATA/Users/amahmood/GDrive/MVTec_AD/"
   datadir_gdrive: "/content/drive/MyDrive/ML_Datasets/MvTec_AD/"
   downsample: 96, 96, 3
+  crop_size: 64, 64, 3
   image_size: 64, 64, 3
   batch_size: 32
+  n_channels: 3
+  conditioning_dim: 1
 
 knee:
   datadir: "/home/PO3D/raw_data/knee/"
   datadir_longleaf: "/nas/longleaf/home/amahmood/mypine/DATA/knee"
+  datadir_gdrive: "/content/drive/MyDrive/ML_Datasets/knee/"
   image_size: 110, 80, 1
   downsample_size: 128, 128, 1
   n_samples: 16690

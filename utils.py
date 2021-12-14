@@ -81,11 +81,12 @@ def find_k_closest(image, k, data_as_array):
 def get_dataset_image_size(dataset_name):
     input_shape = [
         int(x.strip())
-        for x in configs.dataconfig[dataset_name]["downsample_size"].split(",")
+        for x in configs.dataconfig[dataset_name]["image_size"].split(",")
     ]
 
-    # if configs.config_values.mask_marginals:
-    #     input_shape[-1] += 1  # Append a mask channel
+    # Append mask channels
+    if configs.config_values.y_cond:
+        input_shape[-1] += configs.dataconfig[dataset_name]["conditioning_dim"]
 
     return input_shape
 
@@ -339,9 +340,10 @@ def get_savemodel_dir():
         ds_name = f"{ds_name}_mr{configs.config_values.min_marginal_ratio}-{configs.config_values.marginal_ratio}"
 
     # Folder name: model_name+filters+dataset+L
-    complete_model_name = "{}{}_{}-{}_L{}_SH{:.0e}_SL{:.0e}".format(
+    complete_model_name = "{}{}{}_{}-{}_L{}_SH{:.0e}_SL{:.0e}".format(
         model_name,
         configs.config_values.filters,
+        "_cond" if configs.config_values.y_cond else "",
         ds_name,
         configs.config_values.class_label,
         configs.config_values.num_L,
@@ -360,15 +362,8 @@ def evaluate_print_model_summary(model, verbose=True):
         batch,
     ] + get_dataset_image_size(configs.config_values.dataset)
 
-    # # TODO: This is very hacky, find better solution
-    # if configs.config_values.class_label == "kspace_complex":
-    #     input_shape[-1] += 1  # kspace is 2 channels
-
     print(input_shape)
-    sigma_levels = get_sigma_levels()  # tf.linspace(0.0,1.0,3) #
     idx_sigmas = tf.ones(batch, dtype=tf.int32)
-    #     sigmas = tf.gather(sigma_levels, idx_sigmas)
-    #     sigmas = tf.cast(tf.reshape(sigmas, shape=(batch, 1, 1, 1)), dtype=tf.float32)
     x = [tf.ones(shape=input_shape), idx_sigmas]
     model(x)
     if verbose:
@@ -412,6 +407,7 @@ def try_load_model(
             activation=tf.nn.elu,
             y_conditioned=configs.config_values.y_cond,
             splits=splits,
+            out_shape=configs.config_values.data["n_channels"],
         )
     elif model_name == "refinenet_lite":
         model = RefineNetLite(
@@ -655,7 +651,7 @@ def build_distributed_trainers(
                 # --> Noise may only be applied to foreground
                 x_batch, masks = tf.split(x_batch, (channels, 1), axis=-1)
                 perturbation = tf.random.normal(shape=x_batch.shape) * sigmas
-                perturbation = tf.multiply(perturbation, masks)
+                # perturbation = tf.multiply(perturbation, masks)
 
                 # Used for calculating loss
                 x_batch_perturbed = x_batch + perturbation

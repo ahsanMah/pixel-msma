@@ -14,6 +14,11 @@ import pathlib
 from .mri_utils import complex_magnitude
 from .fastmri import FastKnee, FastKneeTumor
 
+import torch
+from torchvision import transforms
+from PIL import Image
+import itertools
+
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 # AUTOTUNE = tf.data.AUTOTUNE
 
@@ -41,15 +46,101 @@ BRAIN_LABELS = [
     "cerebellum",
 ]
 
-# with open("./datasets/data_configs.yaml") as f:
-#     dataconfig = yaml.full_load(f)
 
-"""
-supervised: To load data for binary classification between inliers and outliers
-"""
+class RandomPattern:
+    """
+    Reproduces "random pattern mask" for inpainting, which was proposed in
+    Pathak, D., Krahenbuhl, P., Donahue, J., Darrell, T.,
+    & Efros, A. A. Context Encoders: Feature Learning by Inpainting.
+    Conference on Computer Vision and Pattern Recognition, 2016.
+    ArXiv link: https://arxiv.org/abs/1604.07379
+    This code is based on lines 273-283 and 316-330 of Context Encoders
+    implementation:
+    https://github.com/pathak22/context-encoder/blob/master/train_random.lua
+    The idea is to generate small matrix with uniform random elements,
+    then resize it using bicubic interpolation into a larger matrix,
+    then binarize it with some threshold,
+    and then crop a rectangle from random position and return it as a mask.
+    If the rectangle contains too many or too few ones, the position of
+    the rectangle is generated again.
+    The big matrix is resampled when the total number of elements in
+    the returned masks times update_freq is more than the number of elements
+    in the big mask. This is done in order to find balance between generating
+    the big matrix for each mask (which is involves a lot of unnecessary
+    computations) and generating one big matrix at the start of the training
+    process and then sampling masks from it only (which may lead to
+    overfitting to the specific patterns).
+    """
+
+    def __init__(
+        self, max_size=10000, resolution=0.06, density=0.25, update_freq=1, seed=239
+    ):
+        """
+        Args:
+            max_size (int):      the size of big binary matrix
+            resolution (float):  the ratio of the small matrix size to
+                                 the big one. Authors recommend to use values
+                                 from 0.01 to 0.1.
+            density (float):     the binarization threshold, also equals
+                                 the average ones ratio in the mask
+            update_freq (float): the frequency of the big matrix resampling
+            seed (int):          random seed
+        """
+        self.max_size = max_size
+        self.resolution = resolution
+        self.density = density
+        self.update_freq = update_freq
+        self.rng = np.random.RandomState(seed)
+        self.regenerate_cache()
+
+    def regenerate_cache(self):
+        """
+        Resamples the big matrix and resets the counter of the total
+        number of elements in the returned masks.
+        """
+        low_size = int(self.resolution * self.max_size)
+        low_pattern = self.rng.uniform(0, 1, size=(low_size, low_size))
+        low_pattern = low_pattern.astype("float32")
+        pattern = Image.fromarray(low_pattern)
+        pattern = pattern.resize((self.max_size, self.max_size), Image.BICUBIC)
+        pattern = np.array(pattern)
+        pattern = (pattern < self.density).astype("float32")
+        self.pattern = pattern
+        self.points_used = 0
+
+    def __call__(self, image, density_std=0.05):
+        """
+        Image is supposed to have shape [H, W, C].
+        Return binary mask of the same shape, where for each object
+        the ratio of ones in the mask is in the open interval
+        (self.density - density_std, self.density + density_std).
+        The less is density_std, the longer is mask generation time.
+        For very small density_std it may be even infinity, because
+        there is no rectangle in the big matrix which fulfills
+        the requirements.
+        """
+        height, width, num_channels = image.shape
+        x = self.rng.randint(0, self.max_size - width + 1)
+        y = self.rng.randint(0, self.max_size - height + 1)
+        res = self.pattern[y : y + height, x : x + width]
+        coverage = res.mean()
+        while not (self.density - density_std < coverage < self.density + density_std):
+            x = self.rng.randint(0, self.max_size - width + 1)
+            y = self.rng.randint(0, self.max_size - height + 1)
+            res = self.pattern[y : y + height, x : x + width]
+            coverage = res.mean()
+        mask = np.tile(res[:, :, None], [1, 1, num_channels])
+        mask = 1.0 - mask
+        self.points_used += width * height
+        if self.update_freq * (self.max_size ** 2) < self.points_used:
+            self.regenerate_cache()
+        return mask.astype("uint8")
 
 
 def load_data(dataset_name, include_ood=False, supervised=False):
+    """
+    supervised: To load data for binary classification between inliers and outliers
+    """
     # load data from tfds
 
     if "knee" in dataset_name:
@@ -414,11 +505,11 @@ def mvtec_aug(x):
     shape = configs.dataconfig[configs.config_values.dataset]["downsample"]
     img_sz = int(shape.split(",")[0].strip())
 
-    shape = configs.dataconfig[configs.config_values.dataset]["shape"]
+    shape = configs.dataconfig[configs.config_values.dataset]["crop_size"]
     crop_sz = int(shape.split(",")[0].strip())
     print("Crop:", crop_sz)
 
-    translate_ratio = 0.5 * (crop_sz / img_sz)
+    translate_ratio = 0.33 * (crop_sz / img_sz)
 
     x = tfa.image.rotate(x, tf.random.uniform((1,), 0, np.pi / 2))
     x = tfa.image.translate(
@@ -533,6 +624,42 @@ def map_decorator(func):
     return wrapper
 
 
+def build_mvtec_mask_fn(name, constant=False):
+    shape = configs.dataconfig[name]["crop_size"]
+    crop_sz = [int(s.strip()) for s in shape.split(",")]
+    tmp = tf.zeros(crop_sz)
+    mask_generator = RandomPattern()
+
+    @tf.function
+    def mvtec_mask(x):
+        """
+        Mask: Zeros -> Masked, Ones-> Observed
+        """
+        if tf.random.uniform([1]) < 0.5:
+            mask = tf.ones_like(x, dtype=tf.bool)
+        else:
+            mask = tf.cast(mask_generator(tmp), dtype=tf.bool)
+
+        # tf where (condition, true_res, false_res)
+        x = tf.where(mask, x, tf.zeros_like(x))
+        mask = tf.cast(mask, dtype=tf.float32)
+        mask = tf.reduce_max(mask, axis=-1, keepdims=True)
+        x = tf.concat((x, mask), axis=-1)
+        return x
+
+    @tf.function
+    def constant_mask(x):
+        """
+        Mask: Zeros -> Masked, Ones-> Observed
+        """
+        mask = tf.ones_like(x, dtype=tf.float32)
+        mask = tf.reduce_max(mask, axis=-1, keepdims=True)
+        x = tf.concat((x, mask), axis=-1)
+        return x
+
+    return constant_mask if constant else mvtec_mask
+
+
 preproc_map = {
     "knee_complex": knee_preproc,
     "knee": knee_preproc,
@@ -552,6 +679,8 @@ aug_map = {
     "mvtec": mvtec_aug,
     "mvtec_lowres": mvtec_aug,
 }
+
+mask_map = {"mvtec_lowres": build_mvtec_mask_fn("mvtec_lowres")}
 
 # Datasets too big (or randomly generated )to cache
 cache_blacklist = {}
@@ -604,18 +733,29 @@ def preprocess(dataset_name, data, train=True):
 
     #     data = data.map(mask_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
 
-    if configs.config_values.dataset != "celeb_a":
-        data = data.batch(configs.config_values.global_batch_size)
-
+    # Online augmentation
     if train and dataset_name in aug_map:
         data = data.map(aug_map[dataset_name], num_parallel_calls=2)
 
-    # Online augmentation
     if dataset_name in ["blown_fashion", "blown_masked_fashion"]:
         data = data.map(pad)
 
     if dataset_name in ["masked_fashion", "blown_masked_fashion"]:
         data = data.map(concat_mask)
+
+    #### Masking before batching
+    if configs.config_values.y_cond:
+        assert dataset_name in mask_map, f"No masking function for {dataset_name}"
+
+        if train:
+            mask_fn = mask_map[dataset_name]
+        else:
+            mask_fn = build_mvtec_mask_fn("mvtec_lowres", constant=True)
+
+        data = data.map(mask_fn, num_parallel_calls=2)
+
+    if configs.config_values.dataset != "celeb_a":
+        data = data.batch(configs.config_values.global_batch_size)
 
     if train and dataset_name in [
         "multiscale_cifar10",
