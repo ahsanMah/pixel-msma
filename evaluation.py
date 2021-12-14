@@ -28,7 +28,7 @@ def compute_and_save_score_norms(model, dataset, score_cache_filename):
     seed = 42
     tf.random.set_seed(seed)
     np.random.seed(seed)
-    
+
     os.makedirs(score_cache_filename, exist_ok=True)
 
     # load dataset from tfds with test/ood data
@@ -65,7 +65,7 @@ def compute_and_save_score_norms(model, dataset, score_cache_filename):
 
     ## Multiple runs of random masks
     for i in range(n_iters):
-        seed = 42 + i
+        seed = 420 + i
         tf.random.set_seed(seed)
         np.random.seed(seed)
         scores = {}
@@ -92,6 +92,7 @@ def compute_and_save_score_norms(model, dataset, score_cache_filename):
     # TODO: Multiple runs of *same* mask for ALL data points
 
     return scores
+
 
 def run_constant_mask_experiment(model, dataset, score_cache_filename):
 
@@ -152,9 +153,72 @@ def run_constant_mask_experiment(model, dataset, score_cache_filename):
 
     return scores
 
+
+def run_constant_mask_experiment(model, dataset, score_cache_filename):
+
+    score_cache_filename = f"{score_cache_filename}/constant_mask_exp"
+    os.makedirs(score_cache_filename, exist_ok=True)
+    n_iters = 1
+
+    # Multiple runs of constant masks
+    for i in range(n_iters):
+        seed = 42 + i
+        tf.random.set_seed(seed)
+        np.random.seed(seed)
+        scores = {}
+
+        run_dir = f"{score_cache_filename}/run_{i}"
+        os.makedirs(score_cache_filename, exist_ok=True)
+
+        # load dataset from tfds with test/ood data
+        train, val, test = load_data(dataset, include_ood=True, supervised=False)
+
+        input_shape = utils.get_dataset_image_size(configs.config_values.dataset)
+        channels = input_shape[-1]
+
+        # Create a dictionary of score results
+        datasets = {
+            "val": preprocess(dataset, val, train=False).prefetch(AUTOTUNE),
+            "ood": preprocess(dataset, test, train=False).prefetch(AUTOTUNE),
+        }
+
+        train_scores = {}
+
+        ds = preprocess(dataset, train, train=False)  # .take(10)
+        ds = ds.cache()  # Use same masks for all sigmas
+        ds = ds.prefetch(AUTOTUNE)
+
+        train_scores["scores"] = compute_batched_score_norms(
+            model, ds, masked_input=False
+        )
+
+        # Record masks used for scores
+        masks = []
+        for x in ds:
+            _, m = tf.split(x, (channels - 1, 1), axis=-1)
+            masks.append(m)
+
+        train_scores["masks"] = np.concatenate(masks, axis=0)
+        np.savez_compressed(f"{run_dir}/train", **train_scores)
+
+        for name, ds in datasets.items():
+            scores[name] = {}
+            _ds = ds.cache()  # Use same masks for all sigmas
+
+            scores[name]["scores"] = compute_batched_score_norms(
+                model, _ds, masked_input=False, seed=seed
+            )
+
+        np.savez_compressed(f"{run_dir}/eval_{i}", **scores)
+
+    return scores
+
+
 def partial_observation_eval(model, complete_model_name):
     max_marginal_ratio = configs.config_values.marginal_ratio
-    min_marginal_ratio = configs.config_values.marginal_ratio#configs.config_values.min_marginal_ratio
+    min_marginal_ratio = (
+        configs.config_values.marginal_ratio
+    )  # configs.config_values.min_marginal_ratio
     dataset = configs.config_values.dataset
     score_cache_dir = os.path.join("score_cache", dataset, complete_model_name)
     os.makedirs(score_cache_dir, exist_ok=True)

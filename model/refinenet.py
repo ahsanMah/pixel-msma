@@ -99,12 +99,17 @@ class RefineNetV1(keras.Model):
 
 
 class RefineNet(keras.Model):
-    def __init__(self, filters, activation, y_conditioned=False, splits=None):
+    def __init__(
+        self, filters, activation, y_conditioned=False, splits=None, out_shape=None
+    ):
         super(RefineNet, self).__init__()
         self.in_shape = None
+        self.out_shape = out_shape
 
         # Boolean is True when conditional information is concatenated to x
         self.y_conditioned = y_conditioned
+        # TODO: Have a separate branch that reads in mask
+        #       and concat embedding later in the network...?
         self.splits = splits
 
         self.increase_channels = layers.Conv2D(filters, kernel_size=3, padding="same")
@@ -149,12 +154,9 @@ class RefineNet(keras.Model):
     def build(self, input_shape):
         # Here we get the depth of the image that is passed to the model at the start, i.e. 1 for MNIST.
         self.in_shape = input_shape
-        out_shape = input_shape[0][-1]
-        if self.y_conditioned:
-            out_shape = out_shape - 1  # Ignore mask dimension
 
         self.decrease_channels = layers.Conv2D(
-            out_shape, kernel_size=3, strides=1, padding="same"
+            self.out_shape, kernel_size=3, strides=1, padding="same"
         )
 
     def call(self, inputs, mask=None):

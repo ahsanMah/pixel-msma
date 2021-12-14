@@ -13,6 +13,12 @@ from datasets.dataset_loader import get_train_test_data
 
 SPLITS = None
 
+import torch
+from torch.fft import fft2 as fft
+from torch.fft import ifft2 as ifft
+from torch.fft import fftshift, ifftshift
+from datasets.mri_utils import complex_magnitude
+
 
 def clamped(x):
     return tf.clip_by_value(x, 0, 1.0)
@@ -34,6 +40,10 @@ def save_as_grid(images, filename, spacing=2, rows=None):
     :param images:
     :return:
     """
+
+    if configs.config_values.mask_marginals:
+        images = images[..., :-1]
+
     # Define grid dimensions
     n_images, height, width, channels = images.shape
     if rows is None:
@@ -72,16 +82,36 @@ def sample_one_step(model, x, idx_sigmas, alpha_i):
     return x + alpha_i / 2 * score + noise
 
 
-@tf.function
-def sample_conditioned_step(model, x, idx_sigmas, alpha_i):
-    score = model([x, idx_sigmas])
+def build_sample_step():
 
-    x, y = tf.split(x, SPLITS, axis=-1)
-    z_t = tf.random.normal(shape=x.get_shape(), mean=0, stddev=1.0)
-    noise = tf.sqrt(alpha_i) * z_t
-    x = x + alpha_i / 2 * score + noise
+    if configs.config_values.mask_marginals:
+        input_shape = utils.get_dataset_image_size(configs.config_values.dataset)
+        channels = input_shape[-1] - 1
 
-    return tf.concat((x, y), axis=-1)
+        @tf.function
+        def sample_conditioned_step(model, x, idx_sigmas, alpha_i):
+            score = model([x, idx_sigmas])
+
+            x, y = tf.split(x, (channels, 1), axis=-1)
+            z_t = tf.random.normal(shape=x.get_shape(), mean=0, stddev=1.0)
+            noise = tf.sqrt(alpha_i) * z_t
+            x = x + alpha_i / 2 * score + noise
+
+            return tf.concat((x, y), axis=-1)
+
+        sample_step = sample_conditioned_step
+    else:
+
+        @tf.function
+        def sample_one_step(model, x, idx_sigmas, alpha_i):
+            z_t = tf.random.normal(shape=x.get_shape(), mean=0, stddev=1.0)
+            score = model([x, idx_sigmas])
+            noise = tf.sqrt(alpha_i) * z_t
+            return x + alpha_i / 2 * score + noise
+
+        sample_step = sample_one_step
+
+    return sample_step
 
 
 @tf.function
@@ -89,6 +119,19 @@ def prepare_conditioned_sample(x):
     img, y = tf.split(x, SPLITS, axis=-1)
     noise = tf.random.uniform(shape=img.shape)
     return tf.concat((noise, y), axis=-1)
+
+
+def ifft_image(x):
+    x_tensor = torch.tensor(x.numpy())
+    x_tensor = torch.cat([x_tensor, torch.zeros_like(x_tensor)], axis=-1)
+
+    kspace = torch.view_as_complex(x_tensor)
+    kspace = ifftshift(kspace, dim=(0, 1))
+    # norm=forward means no normalization
+    target = ifft(kspace, dim=(0, 1), norm="forward")
+    target = ifftshift(target, dim=(0, 1))
+
+    return np.array(target)[..., np.newaxis]
 
 
 def sample_many(model, sigmas, batch_size=128, eps=2 * 1e-5, T=100, n_images=1):
@@ -220,25 +263,37 @@ def sample_and_save(
     else:
         image_size = x.shape
         n_images = image_size[0]
+    print("Init shape:", x.shape)
 
-    # # Use ground truth masks
-    # if (configs.config_values.dataset == "masked_fashion"):
-    #     print("Using groundtruth masks...")
-    #     x = x.numpy()
-    #     fashion_test = get_train_test_data("masked_fashion")[1]
-    #     fashion_test = fashion_test.batch(n_images).take(1)
-    #     f_samples = next(iter(fashion_test)).numpy()
-    #     x[...,-1] = f_samples[...,-1]
-    #     x = tf.constant(x)
+    # Use ground truth masks
+    if configs.config_values.mask_marginals:
+        x = x.numpy()
+        print("Using groundtruth masks...")
+        _test = get_train_test_data(configs.config_values.dataset)[1]
+        _test = list(_test.batch(n_images).take(1))[0]
+        _samples = _test.numpy()
+        x[..., -1] = _samples[..., -1]
+        x = tf.constant(x)
+
+    sample_step = build_sample_step()
 
     for i, sigma_i in enumerate(tqdm(sigmas, desc="Sampling for each sigma")):
         alpha_i = eps * (sigma_i / sigmas[-1]) ** 2
         idx_sigmas = tf.ones(n_images, dtype=tf.int32) * i
         for t in range(T):
-            x = sample_one_step(model, x, idx_sigmas, alpha_i)
+            x = sample_step(model, x, idx_sigmas, alpha_i)
 
             if (t + 1) % T == 0:
                 save_as_grid(x, save_directory + f"sigma{i + 1}_t{t + 1}.png")
+
+    if (
+        configs.config_values.dataset == "knee"
+        and configs.config_values.class_label == "kspace"
+    ):
+
+        x_img = ifft_image(x)
+        save_as_grid(x_img, save_directory + f"sigma{i + 1}_t{t + 1}_ifft.png")
+
     return x
 
 
